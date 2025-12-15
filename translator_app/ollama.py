@@ -23,6 +23,9 @@ class OllamaResponse:
     raw: str
 
 
+ResponseFormat = str | dict[str, Any]
+
+
 def _http_post_json(url: str, payload: dict[str, Any], timeout_s: float = 120.0) -> tuple[int, str]:
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
@@ -49,6 +52,7 @@ def chat_json(
     model: str,
     system: str,
     user: str,
+    response_format: ResponseFormat = "json",
     temperature: float = 0.2,
     seed: int | None = None,
     timeout_s: float = 120.0,
@@ -66,7 +70,7 @@ def chat_json(
             {"role": "user", "content": user},
         ],
         "stream": False,
-        "format": "json",
+        "format": response_format,
         "options": options,
     }
     status, raw = _http_post_json(url, payload, timeout_s=timeout_s)
@@ -86,6 +90,7 @@ def generate_json(
     host: str,
     model: str,
     prompt: str,
+    response_format: ResponseFormat = "json",
     temperature: float = 0.2,
     seed: int | None = None,
     timeout_s: float = 120.0,
@@ -100,7 +105,7 @@ def generate_json(
         "model": model,
         "prompt": prompt,
         "stream": False,
-        "format": "json",
+        "format": response_format,
         "options": options,
     }
     status, raw = _http_post_json(url, payload, timeout_s=timeout_s)
@@ -113,4 +118,3 @@ def generate_json(
 
     latency_ms = int((time.time() - start) * 1000)
     return OllamaResponse(content=content, model=model_name, latency_ms=latency_ms, raw=raw)
-

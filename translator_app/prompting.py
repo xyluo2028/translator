@@ -12,7 +12,8 @@ def build_system_prompt(request: TranslateRequest) -> str:
         "You are a high-precision translation engine.\n"
         "- Preserve meaning, numbers, and proper nouns.\n"
         "- Preserve line breaks and punctuation when reasonable.\n"
-        "- Do not add commentary outside the required JSON.\n"
+        "- Output JSON only (no code fences, no extra text).\n"
+        "- Always include all required keys; use null when unknown.\n"
     )
 
     if request.mode == "dictionary":
@@ -22,23 +23,18 @@ def build_system_prompt(request: TranslateRequest) -> str:
             + tone_line
             + "\n"
             + "Task: Return dictionary-style entries with multiple senses.\n"
-            + 'Output: JSON only, matching this schema:\n'
-            + '{\n'
-            + '  "term": string,\n'
-            + '  "entries": [\n'
-            + "    {\n"
-            + '      "pos": string | null,\n'
-            + '      "senses": [\n'
-            + "        {\n"
-            + '          "meaning": string,\n'
-            + '          "example_source": string | null,\n'
-            + '          "example_target": string | null,\n'
-            + '          "usage_notes": string | null\n'
-            + "        }\n"
-            + "      ]\n"
-            + "    }\n"
-            + "  ]\n"
-            + "}\n"
+            + "Constraints:\n"
+            + "- Provide up to 2 parts-of-speech and up to 3 senses each.\n"
+            + "- Keep example sentences short.\n"
+            + "Required JSON keys:\n"
+            + '- term (string)\n'
+            + '- entries (array of objects)\n'
+            + '  - pos (string|null)\n'
+            + '  - senses (array)\n'
+            + '    - meaning (string)\n'
+            + '    - example_source (string|null)\n'
+            + '    - example_target (string|null)\n'
+            + '    - usage_notes (string|null)\n'
         )
 
     rerun_line = ""
@@ -56,13 +52,11 @@ def build_system_prompt(request: TranslateRequest) -> str:
         + tone_line
         + ("\n" + rerun_line if rerun_line else "")
         + "\n"
-        + 'Output: JSON only, matching this schema:\n'
-        + '{\n'
-        + '  "translation": string,\n'
-        + '  "alternatives": string[] | null,\n'
-        + '  "notes": string | null,\n'
-        + '  "detected_source_lang": string | null\n'
-        + "}\n"
+        + "Required JSON keys:\n"
+        + '- translation (string)\n'
+        + '- alternatives (array of strings|null)\n'
+        + '- notes (string|null)\n'
+        + '- detected_source_lang (string|null)\n'
         + "If the source language is ambiguous, set detected_source_lang to null and explain briefly in notes.\n"
         + "Notes language: "
         + request.explain_lang
@@ -87,4 +81,3 @@ def build_user_prompt(request: TranslateRequest) -> str:
         "Text:\n"
         f"{request.text}\n"
     )
-

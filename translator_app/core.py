@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 from typing import Any, TypeVar
 
 from translator_app.config import AppConfig
@@ -23,6 +22,55 @@ class ProviderResponseParseError(RuntimeError):
 
 
 T = TypeVar("T")
+
+
+def _ollama_response_schema_for(request: TranslateRequest) -> dict[str, Any]:
+    if request.mode == "dictionary":
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["term", "entries"],
+            "properties": {
+                "term": {"type": "string"},
+                "entries": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["pos", "senses"],
+                        "properties": {
+                            "pos": {"type": ["string", "null"]},
+                            "senses": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "required": ["meaning", "example_source", "example_target", "usage_notes"],
+                                    "properties": {
+                                        "meaning": {"type": "string"},
+                                        "example_source": {"type": ["string", "null"]},
+                                        "example_target": {"type": ["string", "null"]},
+                                        "usage_notes": {"type": ["string", "null"]},
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        }
+
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["translation", "alternatives", "notes", "detected_source_lang"],
+        "properties": {
+            "translation": {"type": "string"},
+            "alternatives": {"type": ["array", "null"], "items": {"type": "string"}},
+            "notes": {"type": ["string", "null"]},
+            "detected_source_lang": {"type": ["string", "null"]},
+        },
+    }
 
 
 def _extract_first_json_object(text: str) -> str:
@@ -142,32 +190,69 @@ def translate_text(request: TranslateRequest, *, config: AppConfig) -> Translate
 
     system = build_system_prompt(request)
     user = build_user_prompt(request)
+    response_schema = _ollama_response_schema_for(request)
 
-    try:
-        resp = chat_json(
-            host=config.ollama.host,
-            model=config.ollama.model,
-            system=system,
-            user=user,
-            temperature=request.temperature,
-            seed=request.seed,
-        )
-        content = resp.content
-    except OllamaError:
-        prompt = system + "\n\n" + user
-        resp = generate_json(
-            host=config.ollama.host,
-            model=config.ollama.model,
-            prompt=prompt,
-            temperature=request.temperature,
-            seed=request.seed,
-        )
-        content = resp.content
+    resp = None
+    content = ""
+    last_parse_error: ProviderResponseParseError | None = None
 
-    obj = _parse_json(content)
+    for attempt in range(1, 4):
+        temperature = request.temperature if attempt == 1 else 0.0
+        try:
+            try:
+                resp = chat_json(
+                    host=config.ollama.host,
+                    model=config.ollama.model,
+                    system=system,
+                    user=user,
+                    response_format=response_schema,
+                    temperature=temperature,
+                    seed=request.seed,
+                )
+                content = resp.content
+            except OllamaError:
+                resp = chat_json(
+                    host=config.ollama.host,
+                    model=config.ollama.model,
+                    system=system,
+                    user=user,
+                    response_format="json",
+                    temperature=temperature,
+                    seed=request.seed,
+                )
+                content = resp.content
+
+            obj = _parse_json(content)
+            last_parse_error = None
+            break
+        except ProviderResponseParseError as e:
+            last_parse_error = e
+            if attempt == 1:
+                prompt = system + "\n\n" + user
+                resp = generate_json(
+                    host=config.ollama.host,
+                    model=config.ollama.model,
+                    prompt=prompt,
+                    response_format="json",
+                    temperature=0.0,
+                    seed=request.seed,
+                )
+                content = resp.content
+                try:
+                    obj = _parse_json(content)
+                    last_parse_error = None
+                    break
+                except ProviderResponseParseError as e2:
+                    last_parse_error = e2
+            if attempt >= 3:
+                raise
+
+    if last_parse_error is not None:
+        raise last_parse_error
 
     if request.mode == "dictionary":
+        assert resp is not None
         return _as_dictionary_result(request, obj, provider="ollama", model=resp.model, latency_ms=resp.latency_ms)
 
+    assert resp is not None
     return _as_translate_result(obj, provider="ollama", model=resp.model, latency_ms=resp.latency_ms)
-
