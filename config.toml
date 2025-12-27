@@ -3,8 +3,8 @@ name = "ollama"
 
 [ollama]
 host = "http://localhost:11434"
-# Set to a model you have pulled in Ollama, e.g. "gpt-oss:20b"
-model = "gpt-oss:20b"
+# Set to a model you have pulled in Ollama, e.g. "gpt-oss"
+model = "gpt-oss"
 
 [defaults]
 source_lang = "auto"
