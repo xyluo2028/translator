@@ -1,0 +1,549 @@
+{
+  "suite_name": "cjk_translation_benchmark_v1",
+  "generated_on": "2026-04-13",
+  "mode": "translate",
+  "languages": ["EN", "ZH", "JA"],
+  "cases": [
+    {
+      "id": "en_zh_001",
+      "request_source_lang": "auto",
+      "source_lang": "EN",
+      "target_lang": "ZH",
+      "category": "casual_status",
+      "difficulty": "easy",
+      "source_text": "I'm on my way, but the train is delayed by ten minutes.",
+      "reference_primary": "我正在路上，不过列车晚点了十分钟。",
+      "reference_alternatives": [
+        "我在路上了，不过火车晚了十分钟。",
+        "我正在过去，不过电车延误了十分钟。"
+      ],
+      "evaluation_focus": [
+        "Preserve the ten-minute delay.",
+        "Keep the tone casual and natural.",
+        "Do not add extra explanation."
+      ]
+    },
+    {
+      "id": "en_zh_002",
+      "request_source_lang": "EN",
+      "source_lang": "EN",
+      "target_lang": "ZH",
+      "category": "ui_instruction",
+      "difficulty": "easy",
+      "source_text": "Tap and hold the icon, then choose \"Delete\".",
+      "reference_primary": "长按该图标，然后选择“删除”。",
+      "reference_alternatives": [
+        "按住图标，然后选择“删除”。"
+      ],
+      "evaluation_focus": [
+        "Keep imperative UI tone.",
+        "Preserve the quoted button label semantics.",
+        "Avoid overly formal phrasing."
+      ]
+    },
+    {
+      "id": "en_zh_003",
+      "request_source_lang": "auto",
+      "source_lang": "EN",
+      "target_lang": "ZH",
+      "category": "formatting_multiline",
+      "difficulty": "medium",
+      "source_text": "Order summary:\n- 2 notebooks\n- 1 pen\nTotal: $12.50",
+      "reference_primary": "订单摘要：\n- 2 本笔记本\n- 1 支笔\n总计：12.50 美元",
+      "reference_alternatives": [
+        "订单汇总：\n- 2 本笔记本\n- 1 支钢笔\n总计：$12.50"
+      ],
+      "evaluation_focus": [
+        "Preserve line breaks and bullet structure.",
+        "Preserve all numeric values.",
+        "Keep the output concise."
+      ]
+    },
+    {
+      "id": "en_zh_004",
+      "request_source_lang": "EN",
+      "source_lang": "EN",
+      "target_lang": "ZH",
+      "category": "polite_request",
+      "difficulty": "medium",
+      "source_text": "Could you send me the revised draft before Friday afternoon?",
+      "reference_primary": "你能在周五下午之前把修改后的草稿发给我吗？",
+      "reference_alternatives": [
+        "可以在周五下午前把修订后的草稿发给我吗？"
+      ],
+      "evaluation_focus": [
+        "Keep it polite but not excessively formal.",
+        "Preserve the time constraint.",
+        "Use natural workplace wording."
+      ]
+    },
+    {
+      "id": "en_zh_005",
+      "request_source_lang": "auto",
+      "source_lang": "EN",
+      "target_lang": "ZH",
+      "category": "promotion_copy",
+      "difficulty": "easy",
+      "source_text": "Limited-time offer: buy two, get one free.",
+      "reference_primary": "限时优惠：买二送一。",
+      "reference_alternatives": [
+        "限时活动：买两件送一件。"
+      ],
+      "evaluation_focus": [
+        "Keep it short and promotional.",
+        "Preserve the buy-two-get-one-free offer exactly.",
+        "Avoid explanatory wording."
+      ]
+    },
+    {
+      "id": "zh_en_001",
+      "request_source_lang": "auto",
+      "source_lang": "ZH",
+      "target_lang": "EN",
+      "category": "casual_reply",
+      "difficulty": "easy",
+      "source_text": "我刚到家，先休息一下，晚点再回复你。",
+      "reference_primary": "I just got home. I'll take a short break and reply to you later.",
+      "reference_alternatives": [
+        "I just got home, so I'll rest for a bit and get back to you later."
+      ],
+      "evaluation_focus": [
+        "Keep the tone casual and conversational.",
+        "Preserve the sequencing of actions.",
+        "Do not make it sound stiff."
+      ]
+    },
+    {
+      "id": "zh_en_002",
+      "request_source_lang": "ZH",
+      "source_lang": "ZH",
+      "target_lang": "EN",
+      "category": "work_feedback",
+      "difficulty": "medium",
+      "source_text": "这个方案方向没问题，但细节还需要再打磨。",
+      "reference_primary": "The overall direction of this proposal is fine, but the details still need more refinement.",
+      "reference_alternatives": [
+        "The direction of this plan is fine, but the details still need to be polished further."
+      ],
+      "evaluation_focus": [
+        "Keep the constructive workplace tone.",
+        "Translate 打磨 idiomatically, not literally as 'grind'.",
+        "Preserve the contrast between direction and detail."
+      ]
+    },
+    {
+      "id": "zh_en_003",
+      "request_source_lang": "auto",
+      "source_lang": "ZH",
+      "target_lang": "EN",
+      "category": "schedule_update",
+      "difficulty": "medium",
+      "source_text": "会议改到下周二上午九点，地点还是三楼会议室。",
+      "reference_primary": "The meeting has been moved to next Tuesday at 9:00 a.m., and the location is still the conference room on the third floor.",
+      "reference_alternatives": [
+        "The meeting is now at 9:00 a.m. next Tuesday, and it will still be in the conference room on the third floor."
+      ],
+      "evaluation_focus": [
+        "Preserve both time and location.",
+        "Use natural English schedule wording.",
+        "Do not omit 'still'."
+      ]
+    },
+    {
+      "id": "zh_en_004",
+      "request_source_lang": "ZH",
+      "source_lang": "ZH",
+      "target_lang": "EN",
+      "category": "support_message",
+      "difficulty": "easy",
+      "source_text": "如果页面一直加载不出来，请先清除缓存再重试。",
+      "reference_primary": "If the page keeps failing to load, please clear the cache and try again first.",
+      "reference_alternatives": [
+        "If the page still won't load, please clear your cache and try again."
+      ],
+      "evaluation_focus": [
+        "Keep it concise and instructional.",
+        "Preserve the order of troubleshooting steps.",
+        "Avoid awkward literal wording."
+      ]
+    },
+    {
+      "id": "zh_en_005",
+      "request_source_lang": "auto",
+      "source_lang": "ZH",
+      "target_lang": "EN",
+      "category": "form_validation",
+      "difficulty": "easy",
+      "source_text": "请在提交前确认所有必填项都已填写完整。",
+      "reference_primary": "Please make sure all required fields are fully completed before submitting.",
+      "reference_alternatives": [
+        "Please confirm that all required fields have been filled in before submission."
+      ],
+      "evaluation_focus": [
+        "Use natural form or UI wording.",
+        "Preserve the 'required fields' meaning.",
+        "Avoid redundant phrasing."
+      ]
+    },
+    {
+      "id": "en_ja_001",
+      "request_source_lang": "EN",
+      "source_lang": "EN",
+      "target_lang": "JA",
+      "category": "business_email",
+      "difficulty": "medium",
+      "source_text": "Thank you for your patience. We will send the final estimate by tomorrow evening.",
+      "reference_primary": "お待ちいただきありがとうございます。最終のお見積もりは明日の夕方までにお送りします。",
+      "reference_alternatives": [
+        "お待ちいただきありがとうございます。最終見積書は明日の夕方までにお送りいたします。"
+      ],
+      "evaluation_focus": [
+        "Use polite business Japanese.",
+        "Preserve the deadline clearly.",
+        "Do not sound casual."
+      ]
+    },
+    {
+      "id": "en_ja_002",
+      "request_source_lang": "auto",
+      "source_lang": "EN",
+      "target_lang": "JA",
+      "category": "ui_prompt",
+      "difficulty": "easy",
+      "source_text": "Sign in to continue",
+      "reference_primary": "続行するにはサインインしてください",
+      "reference_alternatives": [
+        "続行するにはログインしてください"
+      ],
+      "evaluation_focus": [
+        "Keep it short and UI-friendly.",
+        "Use a standard product translation.",
+        "Avoid unnecessary particles or punctuation."
+      ]
+    },
+    {
+      "id": "en_ja_003",
+      "request_source_lang": "EN",
+      "source_lang": "EN",
+      "target_lang": "JA",
+      "category": "casual_dialogue",
+      "difficulty": "easy",
+      "source_text": "Do you want to eat here, or should we get takeout?",
+      "reference_primary": "ここで食べる？それとも持ち帰りにする？",
+      "reference_alternatives": [
+        "店内で食べる？それともテイクアウトにする？"
+      ],
+      "evaluation_focus": [
+        "Keep the tone casual and spoken.",
+        "Preserve the either-or choice.",
+        "Avoid overly formal sentence endings."
+      ]
+    },
+    {
+      "id": "en_ja_004",
+      "request_source_lang": "auto",
+      "source_lang": "EN",
+      "target_lang": "JA",
+      "category": "style_instruction",
+      "difficulty": "medium",
+      "source_text": "Please keep the wording simple and avoid technical jargon.",
+      "reference_primary": "表現はわかりやすくし、専門用語は避けてください。",
+      "reference_alternatives": [
+        "言い回しは簡潔にし、技術用語は使わないでください。"
+      ],
+      "evaluation_focus": [
+        "Use instruction-like wording.",
+        "Preserve both constraints.",
+        "Do not overtranslate 'simple' into childish language."
+      ]
+    },
+    {
+      "id": "en_ja_005",
+      "request_source_lang": "EN",
+      "source_lang": "EN",
+      "target_lang": "JA",
+      "category": "payment_support",
+      "difficulty": "medium",
+      "source_text": "We couldn't verify your payment method. Please use a different card.",
+      "reference_primary": "お支払い方法を確認できませんでした。別のカードをご利用ください。",
+      "reference_alternatives": [
+        "お支払い方法を確認できなかったため、別のカードをお使いください。"
+      ],
+      "evaluation_focus": [
+        "Keep it clear and customer-facing.",
+        "Preserve the failure reason.",
+        "Do not sound accusatory."
+      ]
+    },
+    {
+      "id": "ja_en_001",
+      "request_source_lang": "auto",
+      "source_lang": "JA",
+      "target_lang": "EN",
+      "category": "status_update",
+      "difficulty": "medium",
+      "source_text": "今日はちょっとバタバタしていて、まだ確認できていません。",
+      "reference_primary": "Things have been a bit hectic today, and I still haven't had a chance to check it.",
+      "reference_alternatives": [
+        "It's been a bit hectic today, so I haven't been able to review it yet."
+      ],
+      "evaluation_focus": [
+        "Translate バタバタ idiomatically.",
+        "Keep the tone natural and mildly apologetic.",
+        "Preserve the unfinished status."
+      ]
+    },
+    {
+      "id": "ja_en_002",
+      "request_source_lang": "JA",
+      "source_lang": "JA",
+      "target_lang": "EN",
+      "category": "approval_request",
+      "difficulty": "medium",
+      "source_text": "ご確認のうえ、問題がなければご承認をお願いいたします。",
+      "reference_primary": "Please review it, and if there are no issues, approve it.",
+      "reference_alternatives": [
+        "Please check it, and if everything looks fine, kindly approve it."
+      ],
+      "evaluation_focus": [
+        "Preserve the polite request tone.",
+        "Do not overcomplicate the sentence.",
+        "Keep the sequencing intact."
+      ]
+    },
+    {
+      "id": "ja_en_003",
+      "request_source_lang": "auto",
+      "source_lang": "JA",
+      "target_lang": "EN",
+      "category": "settings_instruction",
+      "difficulty": "medium",
+      "source_text": "設定画面から通知をオフにすると、メールも送信されなくなります。",
+      "reference_primary": "If you turn off notifications from the settings screen, emails will no longer be sent either.",
+      "reference_alternatives": [
+        "If you disable notifications in the settings screen, emails will stop being sent as well."
+      ],
+      "evaluation_focus": [
+        "Preserve the cause-effect relationship.",
+        "Keep settings or UI wording natural.",
+        "Retain the meaning of も."
+      ]
+    },
+    {
+      "id": "ja_en_004",
+      "request_source_lang": "JA",
+      "source_lang": "JA",
+      "target_lang": "EN",
+      "category": "formatting_multiline",
+      "difficulty": "easy",
+      "source_text": "営業時間:\n平日 10:00-18:00\n土日祝 休み",
+      "reference_primary": "Business hours:\nWeekdays 10:00-18:00\nClosed on weekends and public holidays",
+      "reference_alternatives": [
+        "Hours:\nWeekdays 10:00-18:00\nClosed on weekends and holidays"
+      ],
+      "evaluation_focus": [
+        "Preserve line breaks and time values.",
+        "Translate 土日祝 naturally.",
+        "Keep signage style concise."
+      ]
+    },
+    {
+      "id": "ja_en_005",
+      "request_source_lang": "auto",
+      "source_lang": "JA",
+      "target_lang": "EN",
+      "category": "soft_commitment",
+      "difficulty": "medium",
+      "source_text": "一応、先方にも共有しておきます。",
+      "reference_primary": "I'll share it with the other party as well, just in case.",
+      "reference_alternatives": [
+        "I'll go ahead and share it with them too, just to be safe."
+      ],
+      "evaluation_focus": [
+        "Translate 一応 idiomatically.",
+        "Preserve the proactive but soft tone.",
+        "Do not literalize 先方 awkwardly."
+      ]
+    },
+    {
+      "id": "zh_ja_001",
+      "request_source_lang": "ZH",
+      "source_lang": "ZH",
+      "target_lang": "JA",
+      "category": "polite_check",
+      "difficulty": "medium",
+      "source_text": "麻烦您确认一下附件里的报价单是否是最新版本。",
+      "reference_primary": "お手数ですが、添付の見積書が最新版かどうかご確認ください。",
+      "reference_alternatives": [
+        "恐れ入りますが、添付の見積書が最新バージョンかご確認ください。"
+      ],
+      "evaluation_focus": [
+        "Use polite business Japanese.",
+        "Preserve the attachment reference.",
+        "Do not make it too blunt."
+      ]
+    },
+    {
+      "id": "zh_ja_002",
+      "request_source_lang": "auto",
+      "source_lang": "ZH",
+      "target_lang": "JA",
+      "category": "payment_error",
+      "difficulty": "easy",
+      "source_text": "支付失败，请检查网络后重试。",
+      "reference_primary": "お支払いに失敗しました。ネットワークを確認してから再試行してください。",
+      "reference_alternatives": [
+        "決済に失敗しました。ネットワークを確認のうえ、再度お試しください。"
+      ],
+      "evaluation_focus": [
+        "Keep standard app error wording.",
+        "Preserve the troubleshooting order.",
+        "Avoid unnatural literal phrasing."
+      ]
+    },
+    {
+      "id": "zh_ja_003",
+      "request_source_lang": "ZH",
+      "source_lang": "ZH",
+      "target_lang": "JA",
+      "category": "confidentiality_hint",
+      "difficulty": "hard",
+      "source_text": "这件事先别声张，等结果出来再说。",
+      "reference_primary": "この件はひとまず広めないで、結果が出てからにしましょう。",
+      "reference_alternatives": [
+        "この件は今は公にせず、結果が出てから改めて話しましょう。"
+      ],
+      "evaluation_focus": [
+        "Capture the implied confidentiality.",
+        "Keep the tone natural, not threatening.",
+        "Avoid overly literal rendering of 声张."
+      ]
+    },
+    {
+      "id": "zh_ja_004",
+      "request_source_lang": "auto",
+      "source_lang": "ZH",
+      "target_lang": "JA",
+      "category": "release_note",
+      "difficulty": "medium",
+      "source_text": "本次更新修复了三个已知问题，但可能会影响旧设备的启动速度。",
+      "reference_primary": "今回の更新では既知の問題を3件修正しましたが、古い端末の起動速度に影響する可能性があります。",
+      "reference_alternatives": [
+        "今回のアップデートで既知の不具合を3件修正しましたが、旧型端末の起動速度に影響する場合があります。"
+      ],
+      "evaluation_focus": [
+        "Preserve the three-issue count.",
+        "Keep release-note style concise.",
+        "Retain the cautionary nuance."
+      ]
+    },
+    {
+      "id": "zh_ja_005",
+      "request_source_lang": "ZH",
+      "source_lang": "ZH",
+      "target_lang": "JA",
+      "category": "invoice_notice",
+      "difficulty": "medium",
+      "source_text": "如需开发票，请在下单时填写公司抬头和税号。",
+      "reference_primary": "領収書が必要な場合は、ご注文時に会社名義と税番号をご入力ください。",
+      "reference_alternatives": [
+        "請求書が必要な場合は、注文時に会社名と納税者番号を入力してください。"
+      ],
+      "evaluation_focus": [
+        "Keep transactional or e-commerce wording natural.",
+        "Preserve both required fields.",
+        "Avoid ambiguity about when to provide the information."
+      ]
+    },
+    {
+      "id": "ja_zh_001",
+      "request_source_lang": "auto",
+      "source_lang": "JA",
+      "target_lang": "ZH",
+      "category": "precautionary_share",
+      "difficulty": "medium",
+      "source_text": "念のため、明日の打ち合わせ資料をもう一度共有します。",
+      "reference_primary": "保险起见，我再分享一次明天会议的资料。",
+      "reference_alternatives": [
+        "以防万一，我再发一次明天开会的资料。"
+      ],
+      "evaluation_focus": [
+        "Translate 念のため idiomatically.",
+        "Preserve the repeated-sharing nuance.",
+        "Keep it natural in Chinese."
+      ]
+    },
+    {
+      "id": "ja_zh_002",
+      "request_source_lang": "JA",
+      "source_lang": "JA",
+      "target_lang": "ZH",
+      "category": "bug_report",
+      "difficulty": "easy",
+      "source_text": "アプリは起動しますが、ログイン後すぐに落ちます。",
+      "reference_primary": "应用可以启动，但登录后会立刻崩溃。",
+      "reference_alternatives": [
+        "应用能打开，但登录后马上就闪退。"
+      ],
+      "evaluation_focus": [
+        "Preserve the contrast between launch success and post-login failure.",
+        "Use natural bug-report terminology.",
+        "Do not weaken the immediacy of すぐに."
+      ]
+    },
+    {
+      "id": "ja_zh_003",
+      "request_source_lang": "auto",
+      "source_lang": "JA",
+      "target_lang": "ZH",
+      "category": "shipping_schedule",
+      "difficulty": "medium",
+      "source_text": "来週の木曜日は祝日のため、発送は金曜日になります。",
+      "reference_primary": "由于下周四是节假日，发货将改为周五。",
+      "reference_alternatives": [
+        "因为下周四是节日，商品会在周五发出。"
+      ],
+      "evaluation_focus": [
+        "Preserve the causal relationship.",
+        "Keep fulfillment wording natural.",
+        "Do not omit the weekday information."
+      ]
+    },
+    {
+      "id": "ja_zh_004",
+      "request_source_lang": "JA",
+      "source_lang": "JA",
+      "target_lang": "ZH",
+      "category": "tone_softening",
+      "difficulty": "hard",
+      "source_text": "この表現だと少し強すぎるので、もう少し柔らかくできますか。",
+      "reference_primary": "这个说法有点太强硬了，能不能再委婉一些？",
+      "reference_alternatives": [
+        "这种表达稍微有点太强了，可以再柔和一点吗？"
+      ],
+      "evaluation_focus": [
+        "Preserve the request to soften tone.",
+        "Keep the feedback tactful.",
+        "Do not translate 柔らかく too literally as physically soft."
+      ]
+    },
+    {
+      "id": "ja_zh_005",
+      "request_source_lang": "auto",
+      "source_lang": "JA",
+      "target_lang": "ZH",
+      "category": "refund_policy",
+      "difficulty": "easy",
+      "source_text": "返金には通常5〜7営業日かかります。",
+      "reference_primary": "退款通常需要 5 到 7 个工作日。",
+      "reference_alternatives": [
+        "退款一般需要 5 至 7 个工作日。"
+      ],
+      "evaluation_focus": [
+        "Preserve the 5-7 business day window.",
+        "Keep policy wording concise.",
+        "Do not convert business days to calendar days."
+      ]
+    }
+  ]
+}
