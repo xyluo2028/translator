@@ -2,7 +2,9 @@
 
 Build a practical translator app backed by an LLM (e.g. `"hello" -> "你好"`), with tone controls, dictionary-style lookup, and fast “retry / regenerate” when the result isn’t satisfying.
 
-## Quickstart (M1)
+## Quickstart
+
+### Ollama backend
 
 Prereqs: Python 3.13+, Ollama running locally (`ollama serve`), and a model pulled (e.g. `ollama pull gpt-oss:20b`).
 
@@ -17,13 +19,42 @@ python3 translate.py "run" --mode dictionary --to EN
 python3 translate.py "hello" --to ZH --rerun more_literal
 ```
 
+### Hugging Face Transformers backend (Gemma 4)
+
+Install the optional local inference stack:
+
+```bash
+python3 -m pip install -e '.[transformers]'
+```
+
+Then switch the provider in `config.toml`:
+
+```toml
+[provider]
+name = "transformers"
+
+[transformers]
+model = "google/gemma-4-E4B-it"
+device_map = "auto"
+dtype = "auto"
+max_new_tokens = 512
+enable_thinking = false
+```
+
+You can also override the provider per command:
+
+```bash
+python3 translate.py "hello" --to ZH --provider transformers
+python3 translate.py "run" --mode dictionary --to EN --provider transformers
+```
+
 ## Goals
 
 - **Fast translation** between languages with optional **auto-detect**.
 - **Tone / style presets** (casual, formal, polite, spoken, business, etc).
 - **Dictionary mode** for single words/phrases (multiple senses, POS, examples).
 - **Refresh / rerun** to regenerate (optionally with “more literal / more natural”).
-- **Provider-agnostic**: local-first (Ollama), plus API providers via key.
+- **Provider-agnostic**: local-first with Ollama or Hugging Face Transformers.
 
 ## Non-goals (for MVP)
 
@@ -66,6 +97,7 @@ Keep the system modular so the UI is a thin client and the “translation engine
 
 - **Provider adapters**
   - `ollama` (local) as default
+  - `transformers` for local Hugging Face models such as Gemma 4
   - `openai` / `anthropic` / others (API-key based), optional
   - common interface: `generate(prompt, params) -> text`
 
@@ -133,20 +165,24 @@ Prefer **structured output** so the UI can render consistently.
 ## Config (suggested `config.toml`)
 
 ```toml
-provider = "ollama" # or "openai"
+[provider]
+name = "ollama" # or "transformers"
 
 [ollama]
 host = "http://localhost:11434"
 model = "qwen2.5:7b"
 
-[openai]
-model = "gpt-4.1-mini"
-api_key_env = "OPENAI_API_KEY"
+[transformers]
+model = "google/gemma-4-E4B-it"
+device_map = "auto"
+dtype = "auto"
+max_new_tokens = 512
 
-[app]
-default_target_lang = "ZH"
-default_tone = "neutral"
-history_db = "translator.db"
+[defaults]
+target_lang = "ZH"
+tone = "neutral"
+explain_lang = "EN"
+temperature = 0.2
 ```
 
 ## Tech choices (recommended to start)

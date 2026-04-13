@@ -4,9 +4,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
-from translator_app.config import load_config
+from translator_app.config import ProviderConfig, load_config
 from translator_app.core import translate_text
 from translator_app.models import RerunHint, TranslateRequest
 
@@ -19,10 +19,11 @@ def _read_text_from_stdin() -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="LLM-backed translator (Ollama by default).")
+    parser = argparse.ArgumentParser(description="LLM-backed translator with pluggable model backends.")
     parser.add_argument("text", nargs="?", help="Text to translate (or omit to read stdin).")
 
     parser.add_argument("--config", default="config.toml", help="Path to config TOML.")
+    parser.add_argument("--provider", choices=("ollama", "transformers"), default=None)
     parser.add_argument("--mode", choices=("translate", "dictionary"), default=None)
     parser.add_argument("--from", dest="source_lang", default=None, help='Source language (or "auto").')
     parser.add_argument("--to", dest="target_lang", default=None, help="Target language.")
@@ -49,6 +50,8 @@ def main(argv: list[str] | None = None) -> int:
     text = args.text if args.text is not None else _read_text_from_stdin()
 
     config = load_config(args.config)
+    if args.provider:
+        config = replace(config, provider=ProviderConfig(name=args.provider))
 
     request = TranslateRequest(
         text=text,
@@ -114,4 +117,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

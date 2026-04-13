@@ -19,6 +19,16 @@ class OllamaConfig:
 
 
 @dataclass(frozen=True)
+class TransformersConfig:
+    model: str = "google/gemma-4-E4B-it"
+    device_map: str = "auto"
+    dtype: str = "auto"
+    max_new_tokens: int = 512
+    enable_thinking: bool = False
+    trust_remote_code: bool = False
+
+
+@dataclass(frozen=True)
 class DefaultsConfig:
     source_lang: str = "auto"
     target_lang: str = "ZH"
@@ -31,6 +41,7 @@ class DefaultsConfig:
 class AppConfig:
     provider: ProviderConfig = ProviderConfig()
     ollama: OllamaConfig = OllamaConfig()
+    transformers: TransformersConfig = TransformersConfig()
     defaults: DefaultsConfig = DefaultsConfig()
 
 
@@ -52,12 +63,31 @@ def load_config(path: str | Path) -> AppConfig:
 
     provider_table = _get_table(data, "provider")
     ollama_table = _get_table(data, "ollama")
+    transformers_table = _get_table(data, "transformers")
     defaults_table = _get_table(data, "defaults")
 
     provider = ProviderConfig(name=str(provider_table.get("name", "ollama")))
     ollama = OllamaConfig(
         host=str(ollama_table.get("host", "http://localhost:11434")),
         model=str(ollama_table.get("model", "gpt-oss:20b")),
+    )
+    max_new_tokens = transformers_table.get("max_new_tokens", 512)
+    if not isinstance(max_new_tokens, int):
+        raise TypeError('Expected "transformers.max_new_tokens" to be an integer')
+    enable_thinking = transformers_table.get("enable_thinking", False)
+    if not isinstance(enable_thinking, bool):
+        raise TypeError('Expected "transformers.enable_thinking" to be a boolean')
+    trust_remote_code = transformers_table.get("trust_remote_code", False)
+    if not isinstance(trust_remote_code, bool):
+        raise TypeError('Expected "transformers.trust_remote_code" to be a boolean')
+
+    transformers = TransformersConfig(
+        model=str(transformers_table.get("model", "google/gemma-4-E4B-it")),
+        device_map=str(transformers_table.get("device_map", "auto")),
+        dtype=str(transformers_table.get("dtype", "auto")),
+        max_new_tokens=max_new_tokens,
+        enable_thinking=enable_thinking,
+        trust_remote_code=trust_remote_code,
     )
 
     temperature = defaults_table.get("temperature", 0.2)
@@ -74,5 +104,4 @@ def load_config(path: str | Path) -> AppConfig:
         temperature=temperature_f,
     )
 
-    return AppConfig(provider=provider, ollama=ollama, defaults=defaults)
-
+    return AppConfig(provider=provider, ollama=ollama, transformers=transformers, defaults=defaults)

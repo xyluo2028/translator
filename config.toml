@@ -1,10 +1,19 @@
 [provider]
-name = "ollama"
+name = "transformers"
 
 [ollama]
 host = "http://localhost:11434"
 # Set to a model you have pulled in Ollama, e.g. "gpt-oss"
-model = "gpt-oss"
+model = "llama3.1:8b"
+
+[transformers]
+# Switch [provider].name to "transformers" to use a local Hugging Face model.
+model = "google/gemma-4-E4B-it"
+device_map = "auto"
+dtype = "auto"
+max_new_tokens = 512
+enable_thinking = false
+trust_remote_code = false
 
 [defaults]
 source_lang = "auto"

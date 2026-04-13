@@ -4,6 +4,7 @@ import json
 from typing import Any, TypeVar
 
 from translator_app.config import AppConfig
+from translator_app.hf_transformers import TransformersError, chat_json as hf_chat_json
 from translator_app.models import (
     DictionaryEntry,
     DictionaryResult,
@@ -24,7 +25,7 @@ class ProviderResponseParseError(RuntimeError):
 T = TypeVar("T")
 
 
-def _ollama_response_schema_for(request: TranslateRequest) -> dict[str, Any]:
+def _response_schema_for(request: TranslateRequest) -> dict[str, Any]:
     if request.mode == "dictionary":
         return {
             "type": "object",
@@ -185,12 +186,25 @@ def _as_dictionary_result(
 
 
 def translate_text(request: TranslateRequest, *, config: AppConfig) -> TranslateResult | DictionaryResult:
-    if config.provider.name != "ollama":
-        raise ValueError(f"Unsupported provider: {config.provider.name!r} (only 'ollama' implemented)")
-
     system = build_system_prompt(request)
     user = build_user_prompt(request)
-    response_schema = _ollama_response_schema_for(request)
+    response_schema = _response_schema_for(request)
+
+    if config.provider.name == "ollama":
+        return _translate_with_ollama(request, config=config, system=system, user=user, response_schema=response_schema)
+    if config.provider.name == "transformers":
+        return _translate_with_transformers(request, config=config, system=system, user=user)
+    raise ValueError(f"Unsupported provider: {config.provider.name!r}")
+
+
+def _translate_with_ollama(
+    request: TranslateRequest,
+    *,
+    config: AppConfig,
+    system: str,
+    user: str,
+    response_schema: dict[str, Any],
+) -> TranslateResult | DictionaryResult:
 
     resp = None
     content = ""
@@ -256,3 +270,56 @@ def translate_text(request: TranslateRequest, *, config: AppConfig) -> Translate
 
     assert resp is not None
     return _as_translate_result(obj, provider="ollama", model=resp.model, latency_ms=resp.latency_ms)
+
+
+def _translate_with_transformers(
+    request: TranslateRequest,
+    *,
+    config: AppConfig,
+    system: str,
+    user: str,
+) -> TranslateResult | DictionaryResult:
+    resp = None
+    content = ""
+    last_parse_error: ProviderResponseParseError | None = None
+
+    for attempt in range(1, 4):
+        temperature = request.temperature if attempt == 1 else 0.0
+        user_prompt = user
+        if attempt >= 2:
+            user_prompt += (
+                "\nReturn exactly one JSON object."
+                "\nDo not add markdown, commentary, or any text before or after the JSON."
+            )
+        try:
+            resp = hf_chat_json(
+                config=config.transformers,
+                system=system,
+                user=user_prompt,
+                temperature=temperature,
+                seed=request.seed,
+            )
+            content = resp.content
+            obj = _parse_json(content)
+            last_parse_error = None
+            break
+        except ProviderResponseParseError as exc:
+            last_parse_error = exc
+            if attempt >= 3:
+                raise
+        except TransformersError as exc:
+            raise exc
+
+    if last_parse_error is not None:
+        raise last_parse_error
+
+    assert resp is not None
+    if request.mode == "dictionary":
+        return _as_dictionary_result(
+            request,
+            obj,
+            provider="transformers",
+            model=resp.model,
+            latency_ms=resp.latency_ms,
+        )
+    return _as_translate_result(obj, provider="transformers", model=resp.model, latency_ms=resp.latency_ms)
