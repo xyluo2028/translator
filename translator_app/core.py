@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import random
+from dataclasses import replace
 from typing import Any, TypeVar
 
 from translator_app.config import AppConfig
-from translator_app.hf_transformers import TransformersError, chat_json as hf_chat_json
+from translator_app.hf_transformers import TransformersError, chat_json as hf_chat_json, chat_messages as hf_chat_messages
 from translator_app.models import (
     DictionaryEntry,
     DictionaryResult,
@@ -12,8 +14,16 @@ from translator_app.models import (
     TranslateRequest,
     TranslateResult,
 )
-from translator_app.ollama import OllamaError, chat_json, generate_json
-from translator_app.prompting import build_system_prompt, build_user_prompt
+from translator_app.ollama import OllamaError, chat_json, chat_text, generate_json
+from translator_app.prompting import (
+    PromptStyle,
+    build_plain_messages,
+    build_plain_prompt,
+    build_system_prompt,
+    build_user_prompt,
+    detect_language,
+    prompt_style_for,
+)
 
 
 class ProviderResponseParseError(RuntimeError):
@@ -185,22 +195,111 @@ def _as_dictionary_result(
     return DictionaryResult(term=term, entries=entries, provider=provider, model=model, latency_ms=latency_ms)
 
 
+def resolve_model(request: TranslateRequest, config: AppConfig) -> tuple[str, PromptStyle]:
+    """Pick the model for a request on the active provider. Translation-only models can't do dictionary mode."""
+    if config.provider.name == "transformers":
+        model, dictionary_model = request.model or config.transformers.model, config.transformers.dictionary_model
+    else:
+        model, dictionary_model = request.model or config.ollama.model, config.ollama.dictionary_model
+    style = prompt_style_for(model)
+    if style != "json" and request.mode == "dictionary":
+        model = dictionary_model
+        style = prompt_style_for(model)
+    if style != "json" and request.mode == "dictionary":
+        raise ValueError(f"Dictionary mode needs a general chat model; {model!r} is translation-only.")
+    return model, style
+
+
 def translate_text(request: TranslateRequest, *, config: AppConfig) -> TranslateResult | DictionaryResult:
+    if config.provider.name not in ("ollama", "transformers"):
+        raise ValueError(f"Unsupported provider: {config.provider.name!r}")
+
+    model, style = resolve_model(request, config)
+    if style != "json":
+        return _translate_plain(request, config=config, model=model, style=style)
+
     system = build_system_prompt(request)
     user = build_user_prompt(request)
-    response_schema = _response_schema_for(request)
-
     if config.provider.name == "ollama":
-        return _translate_with_ollama(request, config=config, system=system, user=user, response_schema=response_schema)
+        return _translate_with_ollama(
+            request, config=config, model=model, system=system, user=user, response_schema=_response_schema_for(request)
+        )
+    config = replace(config, transformers=replace(config.transformers, model=model))
+    return _translate_with_transformers(request, config=config, system=system, user=user)
+
+
+def _translate_plain(
+    request: TranslateRequest,
+    *,
+    config: AppConfig,
+    model: str,
+    style: PromptStyle,
+) -> TranslateResult:
+    """Translation-only models (HY-MT, TranslateGemma): official prompt in, bare translation out."""
+    source_lang = request.source_lang
+    detected = None
+    if source_lang.lower() == "auto":
+        detected = detect_language(request.text)
+        source_lang = detected or ""
+        # Latin script is only a guess at English (could be French, German, ...); don't report it as detected.
+        if detected == "EN":
+            detected = None
+
+    sampling: dict[str, Any] = {"temperature": request.temperature}
+    if style == "hunyuan":
+        # Tencent's recommended sampling settings for HY-MT1.5.
+        sampling.update({"top_k": 20, "top_p": 0.6, "repeat_penalty": 1.05})
+    seed = request.seed
+    if request.rerun:
+        # No schema to steer, so a rerun just samples a different candidate.
+        sampling["temperature"] = max(request.temperature, 0.7)
+        if seed is None:
+            seed = random.randint(0, 2**31 - 1)
+
     if config.provider.name == "transformers":
-        return _translate_with_transformers(request, config=config, system=system, user=user)
-    raise ValueError(f"Unsupported provider: {config.provider.name!r}")
+        messages, add_generation_prompt = build_plain_messages(request, style=style, source_lang=source_lang)
+        resp = hf_chat_messages(
+            config=replace(config.transformers, model=model),
+            messages=messages,
+            add_generation_prompt=add_generation_prompt,
+            sampling=sampling,
+            seed=seed,
+        )
+        tone_model = config.transformers.dictionary_model
+    else:
+        options = dict(sampling)
+        if seed is not None:
+            options["seed"] = seed
+        prompt = build_plain_prompt(request, style=style, source_lang=source_lang)
+        resp = chat_text(host=config.ollama.host, model=model, user=prompt, options=options)
+        tone_model = config.ollama.dictionary_model
+
+    # HY-MT ends lines with markdown hard breaks ("  \n"); drop trailing whitespace per line.
+    translation = "\n".join(line.rstrip() for line in resp.content.strip().splitlines())
+    if not translation:
+        raise ProviderResponseParseError("Model returned an empty translation.", raw_response=resp.raw)
+
+    notes = []
+    if request.tone not in ("", "neutral") or request.tone_instructions:
+        notes.append(f"Tone is not supported by translation-only model {model}; use {tone_model} for tone.")
+    if request.rerun and request.rerun.style != "retry":
+        notes.append(f"{request.rerun.style} is not supported by {model}; returned a fresh sample instead.")
+
+    return TranslateResult(
+        translation=translation,
+        notes=" ".join(notes) or None,
+        detected_source_lang=detected,
+        provider=config.provider.name,
+        model=resp.model or model,
+        latency_ms=resp.latency_ms,
+    )
 
 
 def _translate_with_ollama(
     request: TranslateRequest,
     *,
     config: AppConfig,
+    model: str,
     system: str,
     user: str,
     response_schema: dict[str, Any],
@@ -216,7 +315,7 @@ def _translate_with_ollama(
             try:
                 resp = chat_json(
                     host=config.ollama.host,
-                    model=config.ollama.model,
+                    model=model,
                     system=system,
                     user=user,
                     response_format=response_schema,
@@ -227,7 +326,7 @@ def _translate_with_ollama(
             except OllamaError:
                 resp = chat_json(
                     host=config.ollama.host,
-                    model=config.ollama.model,
+                    model=model,
                     system=system,
                     user=user,
                     response_format="json",
@@ -245,7 +344,7 @@ def _translate_with_ollama(
                 prompt = system + "\n\n" + user
                 resp = generate_json(
                     host=config.ollama.host,
-                    model=config.ollama.model,
+                    model=model,
                     prompt=prompt,
                     response_format="json",
                     temperature=0.0,

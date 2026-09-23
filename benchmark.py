@@ -51,6 +51,7 @@ def _run_case(
     *,
     config: str,
     provider: str,
+    model: str | None,
     timeout_s: int,
 ) -> dict[str, Any]:
     cmd = [
@@ -67,6 +68,8 @@ def _run_case(
         provider,
         "--json",
     ]
+    if model:
+        cmd += ["--model", model]
     proc = subprocess.run(
         cmd,
         cwd=repo_root,
@@ -111,6 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--config", default="config.toml", help="Path to the translator config TOML.")
     parser.add_argument("--provider", choices=("ollama", "transformers"), required=True)
+    parser.add_argument("--model", default=None, help="Override the configured model (e.g. translategemma:12b).")
     parser.add_argument("--output", default=None, help="Path to write JSONL results.")
     parser.add_argument("--results-dir", default="benchmarks/results", help="Directory for generated result files.")
     parser.add_argument("--case-id", action="append", default=[], help="Run only the specified case id. Repeatable.")
@@ -160,6 +164,7 @@ def main(argv: list[str] | None = None) -> int:
                     case,
                     config=args.config,
                     provider=args.provider,
+                    model=args.model,
                     timeout_s=args.timeout,
                 )
             except subprocess.TimeoutExpired as exc:

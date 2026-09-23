@@ -25,6 +25,8 @@ class TranslateRequest:
     rerun: RerunHint | None = None
     seed: int | None = None
     temperature: float = 0.2
+    # Overrides the provider's configured model for this request.
+    model: str | None = None
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local Translator</title>
+<style>
+  :root {
+    --bg: #f6f6f3;
+    --surface: #ffffff;
+    --surface-2: #f0efeb;
+    --border: #e2e0da;
+    --text: #1d1d1b;
+    --muted: #6b6a65;
+    --accent: #2f5bd3;
+    --accent-text: #ffffff;
+    --accent-soft: #e8eefc;
+    --danger: #b3261e;
+    --danger-soft: #fbeceb;
+    --radius: 12px;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 2px 8px rgba(0,0,0,.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141413;
+      --surface: #1d1d1c;
+      --surface-2: #262624;
+      --border: #34332f;
+      --text: #ecebe7;
+      --muted: #9d9b94;
+      --accent: #7b9cf0;
+      --accent-text: #0f1115;
+      --accent-soft: #232b3d;
+      --danger: #f2877f;
+      --danger-soft: #3a2220;
+      --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 48px; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  header h1 { font-size: 18px; font-weight: 650; margin: 0; letter-spacing: -.01em; }
+  header .spacer { flex: 1; }
+  label.field { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+  select, input[type=text] {
+    font: inherit; font-size: 14px; color: var(--text);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 10px; min-height: 34px; max-width: 100%;
+  }
+  select:focus-visible, input:focus-visible, textarea:focus-visible, button:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+  }
+  button {
+    font: inherit; font-size: 14px; cursor: pointer; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--surface); color: var(--text);
+    padding: 6px 12px; min-height: 34px;
+  }
+  button:hover:not(:disabled) { background: var(--surface-2); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+  button.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.08); }
+
+  .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  .seg { display: inline-flex; background: var(--surface-2); border-radius: 9px; padding: 3px; }
+  .seg button { border: 0; background: transparent; min-height: 28px; padding: 3px 12px; color: var(--muted); }
+  .seg button[aria-pressed=true] { background: var(--surface); color: var(--text); box-shadow: var(--shadow); font-weight: 600; }
+  .langs { display: flex; align-items: center; gap: 6px; }
+  .swap { width: 34px; padding: 0; }
+
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .panel {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow); display: flex; flex-direction: column; min-height: 280px; min-width: 0;
+  }
+  textarea {
+    flex: 1; width: 100%; resize: vertical; min-height: 220px; border: 0; background: transparent;
+    color: var(--text); font: inherit; font-size: 17px; padding: 16px; border-radius: var(--radius);
+  }
+  textarea:focus-visible { outline: none; }
+  .panel-foot {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 10px 12px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px;
+  }
+  .panel-foot .spacer { flex: 1; }
+  kbd { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface-2); border-radius: 4px; padding: 1px 5px; }
+  button.primary kbd { background: rgba(127,127,127,.25); color: inherit; }
+
+  .output { flex: 1; padding: 16px; overflow-wrap: anywhere; }
+  .output .main { font-size: 17px; white-space: pre-wrap; }
+  .output .placeholder { color: var(--muted); }
+  .output h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 18px 0 6px; font-weight: 600; }
+  .alts { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .alts li button { width: 100%; text-align: left; white-space: pre-wrap; background: var(--surface-2); border-color: transparent; }
+  .notes { white-space: pre-wrap; color: var(--muted); font-size: 14px; margin: 0; }
+  .error { background: var(--danger-soft); color: var(--danger); border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; font-size: 14px; }
+  .dict-term { font-size: 20px; font-weight: 650; margin: 0 0 4px; }
+  .dict-pos { display: inline-block; font-size: 12px; font-weight: 600; background: var(--accent-soft); color: var(--accent); border-radius: 6px; padding: 1px 8px; margin: 12px 0 6px; }
+  .dict-senses { margin: 0; padding-left: 22px; display: grid; gap: 8px; }
+  .dict-ex { color: var(--muted); font-size: 14px; }
+  .meta { color: var(--muted); font-size: 12px; }
+
+  .spinner { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; display: inline-block; vertical-align: -2px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+
+  .hint { font-size: 13px; color: var(--muted); }
+  .banner { margin-bottom: 12px; }
+
+  details.history { margin-top: 20px; }
+  details.history summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+  .history ul { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 6px; }
+  .history li button { width: 100%; text-align: left; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; background: var(--surface); }
+  .history li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .history li .h-out { color: var(--muted); }
+
+  @media (max-width: 760px) {
+    .panels { grid-template-columns: 1fr; }
+    header label.field, .langs { width: 100%; }
+    header label.field select, .langs select { flex: 1; min-width: 0; }
+    .panel { min-height: 200px; }
+    textarea { min-height: 160px; }
+    .history li button { grid-template-columns: 1fr; gap: 2px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Local Translator</h1>
+    <span class="spacer"></span>
+    <label class="field">Model
+      <select id="model" aria-label="Model"></select>
+    </label>
+  </header>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <div class="toolbar">
+    <div class="seg" role="group" aria-label="Mode">
+      <button type="button" data-mode="translate" aria-pressed="true">Translate</button>
+      <button type="button" data-mode="dictionary" aria-pressed="false">Dictionary</button>
+    </div>
+    <div class="langs">
+      <select id="source" aria-label="Source language"></select>
+      <button type="button" class="swap" id="swap" title="Swap languages" aria-label="Swap languages">⇄</button>
+      <select id="target" aria-label="Target language"></select>
+    </div>
+    <label class="field">Tone
+      <select id="tone" aria-label="Tone">
+        <option value="neutral">Neutral</option>
+        <option value="casual">Casual</option>
+        <option value="formal">Formal</option>
+        <option value="polite">Polite</option>
+        <option value="spoken">Spoken</option>
+        <option value="business">Business</option>
+      </select>
+    </label>
+    <span id="modelHint" class="hint"></span>
+  </div>
+
+  <div class="panels">
+    <section class="panel">
+      <textarea id="input" placeholder="Type or paste text…" aria-label="Text to translate" autofocus></textarea>
+      <div class="panel-foot">
+        <span id="count">0</span>
+        <span class="spacer"></span>
+        <button type="button" id="clear">Clear</button>
+        <button type="button" class="primary" id="go">Translate <kbd>⌘↵</kbd></button>
+      </div>
+    </section>
+    <section class="panel" aria-live="polite">
+      <div class="output" id="output"><p class="placeholder">Translation appears here.</p></div>
+      <div class="panel-foot">
+        <span id="meta" class="meta"></span>
+        <span class="spacer"></span>
+        <button type="button" id="copy" disabled>Copy</button>
+        <button type="button" id="retry" disabled title="Generate a different translation">Retry</button>
+        <button type="button" id="literal" disabled>More literal</button>
+        <button type="button" id="natural" disabled>More natural</button>
+      </div>
+    </section>
+  </div>
+
+  <details class="history" id="historyBox">
+    <summary>History</summary>
+    <ul id="history"></ul>
+  </details>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const state = { info: null, mode: "translate", busy: false, last: null, lastRequest: null };
+const HISTORY_KEY = "translator.history.v1";
+const PREFS_KEY = "translator.prefs.v1";
+
+function store(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} }
+function load(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } }
+function el(tag, props = {}, ...children) {
+  const node = Object.assign(document.createElement(tag), props);
+  for (const c of children) if (c != null) node.append(c);
+  return node;
+}
+
+const modelKey = (m) => `${m.provider}::${m.name}`;
+function currentModel() { return state.info?.models.find((m) => modelKey(m) === $("model").value); }
+function isTranslationOnly() { return !!currentModel()?.translation_only; }
+
+function shortName(name) {
+  // hf.co/tencent/HY-MT1.5-7B-GGUF:Q4_K_M -> HY-MT1.5-7B-GGUF:Q4_K_M
+  return name.startsWith("hf.co/") ? name.split("/").slice(2).join("/") : name;
+}
+
+function showBanner(message) {
+  const b = $("banner");
+  b.replaceChildren();
+  if (message) b.append(el("div", { className: "error", textContent: message }));
+  b.hidden = !message;
+}
+
+async function init() {
+  let info;
+  try {
+    info = await (await fetch("/api/info")).json();
+  } catch (e) {
+    showBanner("Could not reach the translator server. Is `python3 webui.py` still running?");
+    return;
+  }
+  state.info = info;
+  const prefs = load(PREFS_KEY, {});
+
+  const langs = info.languages;
+  const src = $("source"), tgt = $("target");
+  src.append(el("option", { value: "auto", textContent: "Detect language" }));
+  for (const l of langs) {
+    src.append(el("option", { value: l.code, textContent: l.name }));
+    tgt.append(el("option", { value: l.code, textContent: l.name }));
+  }
+  src.value = prefs.source || info.defaults.source_lang || "auto";
+  tgt.value = prefs.target || info.defaults.target_lang || "ZH";
+  if (!src.value) src.value = "auto";
+  if (!tgt.value) tgt.value = "ZH";
+  $("tone").value = prefs.tone || info.defaults.tone || "neutral";
+
+  const modelSel = $("model");
+  const groups = { ollama: el("optgroup", { label: "Ollama" }), transformers: el("optgroup", { label: "Hugging Face" }) };
+  for (const m of info.models) {
+    const tag = m.translation_only ? "translation" : "general";
+    const label = `${shortName(m.name)} · ${tag}${m.available ? "" : ` (${m.reason})`}`;
+    groups[m.provider].append(el("option", { value: modelKey(m), textContent: label, disabled: !m.available }));
+  }
+  for (const g of Object.values(groups)) if (g.children.length) modelSel.append(g);
+  const preferred = [prefs.model, modelKey(info.default_model)].find((k) => info.models.some((m) => modelKey(m) === k && m.available));
+  if (preferred) modelSel.value = preferred;
+
+  if (info.errors.length) showBanner(info.errors.join("\n"));
+  else if (!info.models.some((m) => m.available)) showBanner("No models available. Pull one with: ollama pull translategemma:12b");
+
+  setMode(prefs.mode || "translate");
+  renderHistory();
+  updateControls();
+}
+
+function savePrefs() {
+  store(PREFS_KEY, { source: $("source").value, target: $("target").value, tone: $("tone").value, model: $("model").value, mode: state.mode });
+}
+
+function setMode(mode) {
+  state.mode = mode;
+  for (const b of document.querySelectorAll(".seg button")) b.setAttribute("aria-pressed", String(b.dataset.mode === mode));
+  $("go").firstChild.textContent = mode === "dictionary" ? "Look up " : "Translate ";
+  $("input").placeholder = mode === "dictionary" ? "Enter a word or phrase…" : "Type or paste text…";
+  updateControls();
+}
+
+function updateControls() {
+  const plain = isTranslationOnly();
+  const dict = state.mode === "dictionary";
+  const dictModel = state.info?.dictionary_models[currentModel()?.provider];
+  $("tone").disabled = plain && !dict;
+  let hint = "";
+  if (dict && plain && dictModel) hint = `Dictionary uses ${shortName(dictModel)}`;
+  else if (plain) hint = "Tone needs a general model";
+  $("modelHint").textContent = hint;
+  $("source").disabled = dict;
+  $("count").textContent = `${$("input").value.length} chars`;
+  $("go").disabled = state.busy || !$("input").value.trim();
+  const has = !!state.last && !state.busy;
+  const lastPlain = state.last?.mode === "translate" && isPlainModel(state.last.model);
+  $("copy").disabled = !has;
+  $("retry").disabled = !has || state.last?.mode !== "translate";
+  $("literal").disabled = !has || state.last?.mode !== "translate" || lastPlain;
+  $("natural").disabled = !has || state.last?.mode !== "translate" || lastPlain;
+}
+
+function isPlainModel(name) {
+  const n = (name || "").toLowerCase();
+  return n.includes("hy-mt") || n.includes("hunyuan-mt") || n.includes("translategemma");
+}
+
+async function run(rerun = null) {
+  const text = rerun && state.lastRequest ? state.lastRequest.text : $("input").value;
+  if (!text.trim() || state.busy) return;
+  const body = rerun && state.lastRequest ? { ...state.lastRequest, rerun } : {
+    text,
+    mode: state.mode,
+    source_lang: state.mode === "dictionary" ? "auto" : $("source").value,
+    target_lang: $("target").value,
+    tone: $("tone").disabled ? "neutral" : $("tone").value,
+    provider: currentModel()?.provider || null,
+    model: currentModel()?.name || null,
+  };
+  state.busy = true;
+  updateControls();
+  const out = $("output");
+  const loadHint = body.provider === "transformers" ? "Hugging Face models can take a minute to load on first use" : "the first run loads the model";
+  out.replaceChildren(el("p", { className: "placeholder" }, el("span", { className: "spinner" }), ` Translating… (${loadHint})`));
+  $("meta").textContent = "";
+  try {
+    const res = await fetch("/api/translate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    state.last = data;
+    state.lastRequest = { ...body, rerun: null };
+    render(data);
+    addHistory(body, data);
+  } catch (e) {
+    state.last = null;
+    out.replaceChildren(el("div", { className: "error", textContent: e.message }));
+  } finally {
+    state.busy = false;
+    updateControls();
+  }
+}
+
+function render(data) {
+  const out = $("output");
+  out.replaceChildren();
+  if (data.mode === "dictionary") {
+    out.append(el("p", { className: "dict-term", textContent: data.term }));
+    for (const entry of data.entries || []) {
+      out.append(el("span", { className: "dict-pos", textContent: entry.pos || "—" }));
+      const ol = el("ol", { className: "dict-senses" });
+      for (const s of entry.senses || []) {
+        const li = el("li", {}, el("div", { textContent: s.meaning }));
+        if (s.example_source || s.example_target) {
+          li.append(el("div", { className: "dict-ex", textContent: [s.example_source, s.example_target].filter(Boolean).join(" → ") }));
+        }
+        if (s.usage_notes) li.append(el("div", { className: "dict-ex", textContent: s.usage_notes }));
+        ol.append(li);
+      }
+      out.append(ol);
+    }
+  } else {
+    out.append(el("div", { className: "main", textContent: data.translation }));
+    if (data.alternatives?.length) {
+      out.append(el("h3", { textContent: "Alternatives" }));
+      const ul = el("ul", { className: "alts" });
+      for (const alt of data.alternatives) {
+        ul.append(el("li", {}, el("button", { type: "button", textContent: alt, title: "Copy", onclick: () => copyText(alt) })));
+      }
+      out.append(ul);
+    }
+    if (data.notes) {
+      out.append(el("h3", { textContent: "Notes" }), el("p", { className: "notes", textContent: data.notes }));
+    }
+  }
+  const bits = [(data.provider === "transformers" ? "HF · " : "") + shortName(data.model || "")];
+  if (data.detected_source_lang) bits.push(`detected ${data.detected_source_lang.toUpperCase()}`);
+  if (data.latency_ms != null) bits.push(`${(data.latency_ms / 1000).toFixed(1)}s`);
+  $("meta").textContent = bits.filter(Boolean).join(" · ");
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); flash("Copied"); } catch { flash("Copy failed"); }
+}
+function flash(msg) {
+  const m = $("meta"), prev = m.textContent;
+  m.textContent = msg;
+  setTimeout(() => { if (m.textContent === msg) m.textContent = prev; }, 1200);
+}
+
+function addHistory(req, data) {
+  const out = data.mode === "dictionary" ? (data.entries?.[0]?.senses?.[0]?.meaning || "") : data.translation;
+  const items = load(HISTORY_KEY, []).filter((h) => !(h.req.text === req.text && h.req.target_lang === req.target_lang && h.req.mode === req.mode));
+  items.unshift({ req: { ...req, rerun: null }, data, out, at: Date.now() });
+  store(HISTORY_KEY, items.slice(0, 30));
+  renderHistory();
+}
+
+function renderHistory() {
+  const items = load(HISTORY_KEY, []);
+  const ul = $("history");
+  ul.replaceChildren();
+  $("historyBox").hidden = !items.length;
+  for (const h of items) {
+    const btn = el("button", { type: "button", onclick: () => restore(h) },
+      el("span", { textContent: h.req.text }),
+      el("span", { className: "h-out", textContent: `→ ${h.req.target_lang}: ${h.out}` }));
+    ul.append(el("li", {}, btn));
+  }
+}
+
+function restore(h) {
+  $("input").value = h.req.text;
+  if (h.req.mode !== "dictionary") $("source").value = h.req.source_lang;
+  $("target").value = h.req.target_lang;
+  setMode(h.req.mode);
+  const key = h.req.model && `${h.req.provider || "ollama"}::${h.req.model}`;
+  if (key && [...$("model").options].some((o) => o.value === key && !o.disabled)) $("model").value = key;
+  state.last = h.data;
+  state.lastRequest = h.req;
+  render(h.data);
+  updateControls();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+for (const b of document.querySelectorAll(".seg button")) b.addEventListener("click", () => { setMode(b.dataset.mode); savePrefs(); });
+for (const id of ["source", "target", "tone", "model"]) $(id).addEventListener("change", () => { savePrefs(); updateControls(); });
+$("input").addEventListener("input", updateControls);
+document.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run(); } });
+$("go").addEventListener("click", () => run());
+$("retry").addEventListener("click", () => run("retry"));
+$("literal").addEventListener("click", () => run("more_literal"));
+$("natural").addEventListener("click", () => run("more_natural"));
+$("copy").addEventListener("click", () => {
+  const d = state.last;
+  if (!d) return;
+  copyText(d.mode === "dictionary" ? $("output").innerText : d.translation);
+});
+$("clear").addEventListener("click", () => { $("input").value = ""; $("input").focus(); updateControls(); });
+$("swap").addEventListener("click", () => {
+  const src = $("source"), tgt = $("target");
+  const from = src.value === "auto" ? (state.last?.detected_source_lang || "").toUpperCase() : src.value;
+  if (!from || ![...tgt.options].some((o) => o.value === from)) return;
+  src.value = tgt.value;
+  tgt.value = from;
+  if (state.last?.mode === "translate" && state.last.translation) $("input").value = state.last.translation;
+  savePrefs();
+  updateControls();
+});
+
+init();
+</script>
+</body>
+</html>

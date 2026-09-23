@@ -7,8 +7,10 @@ import sys
 from dataclasses import asdict, replace
 
 from translator_app.config import ProviderConfig, load_config
-from translator_app.core import translate_text
+from translator_app.core import ProviderResponseParseError, translate_text
+from translator_app.hf_transformers import TransformersError
 from translator_app.models import RerunHint, TranslateRequest
+from translator_app.ollama import OllamaError
 
 
 def _read_text_from_stdin() -> str:
@@ -24,6 +26,7 @@ def main(argv: list[str] | None = None) -> int:
 
     parser.add_argument("--config", default="config.toml", help="Path to config TOML.")
     parser.add_argument("--provider", choices=("ollama", "transformers"), default=None)
+    parser.add_argument("--model", default=None, help="Override the provider's configured model.")
     parser.add_argument("--mode", choices=("translate", "dictionary"), default=None)
     parser.add_argument("--from", dest="source_lang", default=None, help='Source language (or "auto").')
     parser.add_argument("--to", dest="target_lang", default=None, help="Target language.")
@@ -64,16 +67,20 @@ def main(argv: list[str] | None = None) -> int:
         rerun=RerunHint(style=args.rerun) if args.rerun else None,
         seed=args.seed,
         temperature=args.temperature if args.temperature is not None else config.defaults.temperature,
+        model=args.model,
     )
 
     try:
         result = translate_text(request, config=config)
-    except Exception as exc:
-        if args.debug and getattr(exc, "raw_response", None):
-            print("=== raw_response ===", file=sys.stderr)
-            print(exc.raw_response, file=sys.stderr)
-            print("=== end raw_response ===", file=sys.stderr)
-        raise
+    except (OllamaError, TransformersError, ProviderResponseParseError, ValueError) as exc:
+        if args.debug:
+            if getattr(exc, "raw_response", None):
+                print("=== raw_response ===", file=sys.stderr)
+                print(exc.raw_response, file=sys.stderr)
+                print("=== end raw_response ===", file=sys.stderr)
+            raise
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     payload = asdict(result)
 

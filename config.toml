@@ -1,14 +1,25 @@
 [provider]
-name = "transformers"
+# Default backend: "ollama" or "transformers" (local Hugging Face models). The web UI can pick either per request.
+name = "ollama"
 
 [ollama]
 host = "http://localhost:11434"
-# Set to a model you have pulled in Ollama, e.g. "gpt-oss"
-model = "llama3.1:8b"
+# Translation model. Translation-only models are detected by name and prompted in their own format:
+#   "hf.co/tencent/HY-MT1.5-7B-GGUF:Q4_K_M"  (Hunyuan MT, `ollama pull hf.co/tencent/HY-MT1.5-7B-GGUF:Q4_K_M`)
+#   "translategemma:12b"                      (TranslateGemma, `ollama pull translategemma:12b`)
+# Any general chat model (e.g. "gpt-oss:latest") also works and supports tone/notes/alternatives.
+model = "hf.co/tencent/HY-MT1.5-7B-GGUF:Q4_K_M"
+# General chat model used for dictionary mode and tone when `model` is translation-only.
+dictionary_model = "gpt-oss:latest"
 
 [transformers]
-# Switch [provider].name to "transformers" to use a local Hugging Face model.
-model = "google/gemma-4-E4B-it"
+# Local Hugging Face models. Setup: `python3 -m venv .venv && .venv/bin/pip install -e '.[transformers]'`,
+# run the app with .venv/bin/python, and download weights first, e.g. `.venv/bin/hf download tencent/HY-MT1.5-7B`.
+model = "tencent/HY-MT1.5-7B"
+# General model used for dictionary mode and tone when `model` is translation-only.
+dictionary_model = "google/gemma-4-E4B-it"
+# Extra models listed in the web UI. TranslateGemma is gated: accept its license on huggingface.co, then `hf auth login`.
+models = ["tencent/HY-MT1.5-1.8B", "google/translategemma-4b-it"]
 device_map = "auto"
 dtype = "auto"
 max_new_tokens = 512

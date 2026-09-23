@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -15,12 +15,18 @@ class ProviderConfig:
 @dataclass(frozen=True)
 class OllamaConfig:
     host: str = "http://localhost:11434"
-    model: str = "gpt-oss:20b"
+    model: str = "hf.co/tencent/HY-MT1.5-7B-GGUF:Q4_K_M"
+    # Used for dictionary mode (and tone) when `model` is a translation-only model.
+    dictionary_model: str = "gpt-oss:latest"
 
 
 @dataclass(frozen=True)
 class TransformersConfig:
-    model: str = "google/gemma-4-E4B-it"
+    model: str = "tencent/HY-MT1.5-7B"
+    # Used for dictionary mode (and tone) when `model` is a translation-only model.
+    dictionary_model: str = "google/gemma-4-E4B-it"
+    # Extra models offered in the web UI's model picker.
+    models: tuple[str, ...] = field(default_factory=tuple)
     device_map: str = "auto"
     dtype: str = "auto"
     max_new_tokens: int = 512
@@ -69,7 +75,8 @@ def load_config(path: str | Path) -> AppConfig:
     provider = ProviderConfig(name=str(provider_table.get("name", "ollama")))
     ollama = OllamaConfig(
         host=str(ollama_table.get("host", "http://localhost:11434")),
-        model=str(ollama_table.get("model", "gpt-oss:20b")),
+        model=str(ollama_table.get("model", OllamaConfig.model)),
+        dictionary_model=str(ollama_table.get("dictionary_model", OllamaConfig.dictionary_model)),
     )
     max_new_tokens = transformers_table.get("max_new_tokens", 512)
     if not isinstance(max_new_tokens, int):
@@ -81,8 +88,14 @@ def load_config(path: str | Path) -> AppConfig:
     if not isinstance(trust_remote_code, bool):
         raise TypeError('Expected "transformers.trust_remote_code" to be a boolean')
 
+    models = transformers_table.get("models", [])
+    if not isinstance(models, list) or not all(isinstance(m, str) for m in models):
+        raise TypeError('Expected "transformers.models" to be a list of strings')
+
     transformers = TransformersConfig(
-        model=str(transformers_table.get("model", "google/gemma-4-E4B-it")),
+        model=str(transformers_table.get("model", TransformersConfig.model)),
+        dictionary_model=str(transformers_table.get("dictionary_model", TransformersConfig.dictionary_model)),
+        models=tuple(models),
         device_map=str(transformers_table.get("device_map", "auto")),
         dtype=str(transformers_table.get("dtype", "auto")),
         max_new_tokens=max_new_tokens,
