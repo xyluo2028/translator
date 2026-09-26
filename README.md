@@ -6,6 +6,7 @@ A portable, local-first translator: runs entirely on your own machine with open 
 - Translate between English, Chinese, Japanese, Korean and a dozen other languages, with auto-detect.
 - Dedicated translation models: **Hunyuan MT 1.5** (Tencent) and **TranslateGemma** (Google).
 - Dictionary mode (parts of speech, senses, examples), tone presets, retry / more literal / more natural.
+- Spelling correction ("Did you mean: **middle**?") and Japanese readings in 漢字（かんじ） form.
 - No cloud APIs, no accounts, nothing leaves your machine.
 
 ## Contents
@@ -23,7 +24,7 @@ A portable, local-first translator: runs entirely on your own machine with open 
 | | Ollama backend (recommended) | Hugging Face backend (optional) |
 |---|---|---|
 | Python | 3.13+ | 3.13+ |
-| Python packages | none (standard library only) | PyTorch, Transformers, … (installed into `.venv`) |
+| Python packages | none (standard library only); optional `text` extra for spelling + readings | PyTorch, Transformers, … (installed into `.venv`) |
 | Other software | [Ollama](https://ollama.com/download) | — |
 | Accelerator | Apple Silicon, NVIDIA, AMD, or CPU (Ollama handles it) | Apple Silicon (MPS) or NVIDIA (CUDA); CPU works but is slow |
 | Disk | ~26 GB for the three default models | ~36 GB for the three default models |
@@ -105,11 +106,24 @@ python3 --version   # must be 3.13 or newer
 
    The first run takes 10–20 s while the model loads.
 
-### 4. Start the web UI
+### 4. Spelling correction and Japanese readings (optional, recommended)
+
+Two small offline dictionaries (~55 MB, no model needed) power "Did you mean" and 漢字（かんじ） readings.
+They work with either backend. If you skipped step 3, create the venv first (`python3 -m venv .venv`).
 
 ```bash
-.venv/bin/python webui.py --open   # if you set up the Hugging Face backend
-python3 webui.py --open            # Ollama only
+.venv/bin/pip install -e '.[text]'
+.venv/bin/python translate.py "midle" --to JA --furigana
+```
+
+You should see `Did you mean: middle` and a Japanese translation with readings, e.g. 中央（ちゅうおう）.
+Without this step both features are simply switched off.
+
+### 5. Start the web UI
+
+```bash
+.venv/bin/python webui.py --open   # if you created .venv (step 3 or 4)
+python3 webui.py --open            # Ollama only, no optional features
 ```
 
 This opens http://127.0.0.1:8765. Stop it with Ctrl+C.
@@ -124,6 +138,12 @@ This opens http://127.0.0.1:8765. Stop it with Ctrl+C.
 - **Translate** / **Dictionary** switch modes. Press ⌘+Enter (macOS) or Ctrl+Enter to run.
 - **Retry** samples a new translation. **Tone**, **More literal** and **More natural** need a general model
   (e.g. `gpt-oss`, Gemma 4) and are greyed out for translation-only models.
+- **Did you mean**: misspelled source words are corrected before translating and shown above the result, e.g.
+  "Did you mean: *middle*?". Click *Translate "midle" instead* to use your text as typed, or pick one of the other
+  suggestions. English is checked with *Detect language*; ES, FR, DE, IT, PT, NL, RU and a few others are checked
+  when you choose them as the source.
+- **振り仮名** toggle adds readings to Japanese kanji as 漢字（かんじ）: in the translation when the target is Japanese,
+  and under the input box when the source is Japanese. Chinese text is never annotated.
 - **History** keeps your last 30 translations in the browser; click one to restore it.
 - Options: `--port 9000`, `--config other.toml`. The server listens on 127.0.0.1 only; `--host 0.0.0.0`
   exposes it to your network with no authentication, so only do that on a network you trust.
@@ -137,6 +157,7 @@ python3 translate.py "打ち合わせ" --mode dictionary --to EN              # 
 python3 translate.py "How are you?" --to JA --tone polite --model gpt-oss:latest
 python3 translate.py "Hello" --from EN --to KO --json --pretty         # structured JSON output
 echo "Bonjour tout le monde" | python3 translate.py --to EN             # read from stdin
+.venv/bin/python translate.py "Where is teh station?" --to JA --furigana # spelling fix + readings
 .venv/bin/python translate.py "hello" --to JA --provider transformers --model tencent/HY-MT1.5-1.8B
 ```
 
@@ -148,6 +169,8 @@ echo "Bonjour tout le monde" | python3 translate.py --to EN             # read f
 | `--mode translate\|dictionary` | Translation or dictionary lookup |
 | `--tone NAME`, `--tone-instructions TEXT` | Style presets (`casual`, `formal`, `polite`, `spoken`, `business`); general models only |
 | `--rerun retry\|more_literal\|more_natural` | Regenerate; translation-only models support `retry` only |
+| `--no-spellcheck` | Translate exactly what you typed (spelling correction is on by default when installed) |
+| `--furigana` | Add readings to Japanese kanji: 漢字（かんじ） (needs the `text` extra) |
 | `--json`, `--pretty` | Print the result as JSON |
 | `--debug` | On errors, show the raw model output and full traceback |
 
@@ -227,6 +250,9 @@ temperature = 0.2
 | `This model is gated: accept its license …` | Accept the license on the model's Hugging Face page, then `.venv/bin/hf auth login`. |
 | `requires the PIL library` or `No module named 'torchvision'` | Your venv predates these dependencies: `.venv/bin/pip install -e '.[transformers]'`. |
 | `Some parameters are on the meta device because they were offloaded to the disk` | Not enough free memory for the Hugging Face model, so it runs very slowly. Close other models (e.g. a running web UI, Ollama models via `ollama stop <model>`) or use `tencent/HY-MT1.5-1.8B`. |
+| `--furigana needs the text extra` / 振り仮名 toggle greyed out / no "Did you mean" | Install [step 4](#4-spelling-correction-and-japanese-readings-optional-recommended) and run with `.venv/bin/python`. |
+| A correct word was "corrected" (names, jargon) | Click *Translate "…" instead* in the web UI, or pass `--no-spellcheck`. Capitalized names mid-sentence are already left alone. |
+| A reading is wrong (e.g. unusual names) | Readings come from the UniDic dictionary and can't always know context; add fixes to `_READING_OVERRIDES` in `translator_app/furigana.py`. |
 | First translation is slow | Normal: the model is loading (Ollama ~5–20 s, Hugging Face ~10–30 s). Later requests are fast. |
 | `Address already in use` when starting the web UI | Another copy is running; stop it or use `--port 8766`. |
 | Translation looks wrong with *Detect language* | Pick the source language explicitly (see auto-detect notes under [Models](#models)). |
@@ -244,6 +270,8 @@ translator_app/
   prompting.py            JSON-schema prompts, HY-MT / TranslateGemma templates, language detection
   ollama.py               Ollama HTTP client
   hf_transformers.py      Hugging Face model loading, caching, generation
+  spelling.py             "did you mean" correction (pyspellchecker)
+  furigana.py             漢字（かんじ） readings (fugashi + unidic-lite)
   config.py, models.py    config loading, request/result dataclasses
   web/index.html          the web UI (single file, no build step)
 ```

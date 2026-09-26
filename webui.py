@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from translator_app import furigana, spelling
 from translator_app.config import AppConfig, ProviderConfig, load_config
 from translator_app.core import ProviderResponseParseError, translate_text
 from translator_app.hf_transformers import TransformersError, dependencies_available, is_model_cached
@@ -35,6 +36,7 @@ def _app_info(config: AppConfig) -> dict[str, Any]:
             "ollama": config.ollama.dictionary_model,
             "transformers": config.transformers.dictionary_model,
         },
+        "features": {"spellcheck": spelling.available(), "furigana": furigana.available()},
         "errors": [],
     }
 
@@ -96,7 +98,24 @@ def _request_from_body(body: dict[str, Any], config: AppConfig) -> TranslateRequ
         rerun=RerunHint(style=rerun) if rerun else None,
         temperature=config.defaults.temperature,
         model=(str(body["model"]) if body.get("model") else None),
+        spellcheck=body.get("spellcheck", True) is not False,
     )
+
+
+def _with_furigana(payload: dict[str, Any], request: TranslateRequest) -> dict[str, Any]:
+    """Attach a furigana-annotated copy (payload["furigana"]) when Japanese is involved, so the UI can toggle it."""
+    if not furigana.available():
+        return payload
+    fix = payload.get("spelling")
+    annotated = furigana.annotate_result(
+        payload,
+        source_text=fix["corrected"] if fix else request.text,
+        source_lang=request.source_lang,
+        target_lang=request.target_lang,
+    )
+    if annotated["source"] or annotated["result"] != payload:
+        payload["furigana"] = annotated
+    return payload
 
 
 def make_handler(config: AppConfig) -> type[BaseHTTPRequestHandler]:
@@ -147,7 +166,7 @@ def make_handler(config: AppConfig) -> type[BaseHTTPRequestHandler]:
             except (OllamaError, TransformersError, ProviderResponseParseError, ValueError) as exc:
                 self._send_json(502, {"error": str(exc)})
                 return
-            payload = asdict(result)
+            payload = _with_furigana(asdict(result), request)
             payload["mode"] = request.mode
             self._send_json(200, payload)
 

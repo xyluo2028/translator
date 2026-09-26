@@ -110,6 +110,15 @@
   @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
 
   .hint { font-size: 13px; color: var(--muted); }
+  label.toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
+  label.toggle input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
+  label.toggle:has(input:disabled) { opacity: .45; cursor: default; }
+  .reading { padding: 0 16px 12px; color: var(--muted); font-size: 15px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .spell { font-size: 14px; margin: 0 0 12px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+  .spell .dym b { color: var(--accent); font-style: italic; }
+  .spell .links { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 4px; color: var(--muted); font-size: 13px; }
+  .linkish { background: none; border: 0; padding: 0; min-height: 0; text-align: left; color: var(--accent); font-size: 13px; text-decoration: underline; text-underline-offset: 2px; }
+  .linkish:hover:not(:disabled) { background: none; }
   .banner { margin-bottom: 12px; }
 
   details.history { margin-top: 20px; }
@@ -161,12 +170,16 @@
         <option value="business">Business</option>
       </select>
     </label>
+    <label class="toggle" id="furiganaLabel" title="Show readings for Japanese kanji: 漢字（かんじ）">
+      <input type="checkbox" id="furigana" aria-label="振り仮名 (furigana)"> 振り仮名
+    </label>
     <span id="modelHint" class="hint"></span>
   </div>
 
   <div class="panels">
     <section class="panel">
       <textarea id="input" placeholder="Type or paste text…" aria-label="Text to translate" autofocus></textarea>
+      <div id="sourceReading" class="reading" hidden></div>
       <div class="panel-foot">
         <span id="count">0</span>
         <span class="spacer"></span>
@@ -246,6 +259,10 @@ async function init() {
   if (!src.value) src.value = "auto";
   if (!tgt.value) tgt.value = "ZH";
   $("tone").value = prefs.tone || info.defaults.tone || "neutral";
+  const fg = $("furigana");
+  fg.disabled = !info.features?.furigana;
+  fg.checked = !fg.disabled && prefs.furigana !== false;
+  if (fg.disabled) $("furiganaLabel").title = "Needs the text extra: .venv/bin/pip install -e '.[text]', then run webui.py with .venv/bin/python";
 
   const modelSel = $("model");
   const groups = { ollama: el("optgroup", { label: "Ollama" }), transformers: el("optgroup", { label: "Hugging Face" }) };
@@ -267,7 +284,7 @@ async function init() {
 }
 
 function savePrefs() {
-  store(PREFS_KEY, { source: $("source").value, target: $("target").value, tone: $("tone").value, model: $("model").value, mode: state.mode });
+  store(PREFS_KEY, { source: $("source").value, target: $("target").value, tone: $("tone").value, model: $("model").value, mode: state.mode, furigana: $("furigana").checked });
 }
 
 function setMode(mode) {
@@ -303,10 +320,11 @@ function isPlainModel(name) {
   return n.includes("hy-mt") || n.includes("hunyuan-mt") || n.includes("translategemma");
 }
 
-async function run(rerun = null) {
-  const text = rerun && state.lastRequest ? state.lastRequest.text : $("input").value;
+async function run(rerun = null, overrides = null) {
+  const again = (rerun || overrides) && state.lastRequest;
+  const text = again ? state.lastRequest.text : $("input").value;
   if (!text.trim() || state.busy) return;
-  const body = rerun && state.lastRequest ? { ...state.lastRequest, rerun } : {
+  const body = again ? { ...state.lastRequest, rerun, ...overrides } : {
     text,
     mode: state.mode,
     source_lang: state.mode === "dictionary" ? "auto" : $("source").value,
@@ -314,13 +332,16 @@ async function run(rerun = null) {
     tone: $("tone").disabled ? "neutral" : $("tone").value,
     provider: currentModel()?.provider || null,
     model: currentModel()?.name || null,
+    spellcheck: true,
   };
+  if (overrides?.text != null) $("input").value = overrides.text;  // show what is actually being translated
   state.busy = true;
   updateControls();
   const out = $("output");
   const loadHint = body.provider === "transformers" ? "Hugging Face models can take a minute to load on first use" : "the first run loads the model";
   out.replaceChildren(el("p", { className: "placeholder" }, el("span", { className: "spinner" }), ` Translating… (${loadHint})`));
   $("meta").textContent = "";
+  $("sourceReading").hidden = true;
   try {
     const res = await fetch("/api/translate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const data = await res.json();
@@ -338,9 +359,15 @@ async function run(rerun = null) {
   }
 }
 
-function render(data) {
+function render(raw) {
   const out = $("output");
   out.replaceChildren();
+  const useFurigana = $("furigana").checked && raw.furigana;
+  const data = useFurigana ? { ...raw, ...raw.furigana.result } : raw;
+  const reading = $("sourceReading");
+  reading.textContent = useFurigana && raw.furigana.source ? raw.furigana.source : "";
+  reading.hidden = !reading.textContent;
+  if (raw.spelling) out.append(renderSpelling(raw.spelling));
   if (data.mode === "dictionary") {
     out.append(el("p", { className: "dict-term", textContent: data.term }));
     for (const entry of data.entries || []) {
@@ -374,6 +401,44 @@ function render(data) {
   if (data.detected_source_lang) bits.push(`detected ${data.detected_source_lang.toUpperCase()}`);
   if (data.latency_ms != null) bits.push(`${(data.latency_ms / 1000).toFixed(1)}s`);
   $("meta").textContent = bits.filter(Boolean).join(" · ");
+}
+
+function renderSpelling(fix) {
+  // "Did you mean: <b>middle</b>?" rebuilt from the original so each corrected word can be highlighted.
+  const dym = el("div", { className: "dym" }, "Did you mean: ");
+  let rest = fix.original;
+  for (const c of fix.corrections) {
+    const i = rest.indexOf(c.word);
+    if (i < 0) continue;
+    dym.append(rest.slice(0, i), el("b", { textContent: c.suggestion }));
+    rest = rest.slice(i + c.word.length);
+  }
+  dym.append(rest, /[.!?。！？]\s*$/.test(fix.original) ? "" : "?");
+  const links = el("div", { className: "links" });
+  const shortOriginal = fix.original.length > 40 ? `${fix.original.slice(0, 38).trimEnd()}…` : fix.original;
+  links.append(el("button", { type: "button", className: "linkish", textContent: `Translate “${shortOriginal}” instead`, title: fix.original,
+    onclick: () => run(null, { text: fix.original, spellcheck: false }) }));
+  for (const c of fix.corrections) {
+    for (const alt of c.alternatives || []) {
+      const label = fix.corrections.length > 1 ? `${c.word} → ${alt}` : alt;
+      links.append(el("button", { type: "button", className: "linkish", textContent: label, title: `Use “${alt}” instead`,
+        onclick: () => run(null, { text: replaceWord(fix, c, alt), spellcheck: false }) }));
+    }
+  }
+  if (fix.corrections.some((c) => c.alternatives?.length)) links.insertBefore(el("span", { textContent: "· Or:" }), links.children[1]);
+  return el("div", { className: "spell" }, dym, links);
+}
+
+function replaceWord(fix, chosen, alt) {
+  // Apply every suggestion except `chosen`, which gets `alt`.
+  let out = "", rest = fix.original;
+  for (const c of fix.corrections) {
+    const i = rest.indexOf(c.word);
+    if (i < 0) continue;
+    out += rest.slice(0, i) + (c === chosen ? alt : c.suggestion);
+    rest = rest.slice(i + c.word.length);
+  }
+  return out + rest;
 }
 
 async function copyText(text) {
@@ -423,6 +488,7 @@ function restore(h) {
 for (const b of document.querySelectorAll(".seg button")) b.addEventListener("click", () => { setMode(b.dataset.mode); savePrefs(); });
 for (const id of ["source", "target", "tone", "model"]) $(id).addEventListener("change", () => { savePrefs(); updateControls(); });
 $("input").addEventListener("input", updateControls);
+$("furigana").addEventListener("change", () => { savePrefs(); if (state.last) render(state.last); });
 document.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run(); } });
 $("go").addEventListener("click", () => run());
 $("retry").addEventListener("click", () => run("retry"));
@@ -431,7 +497,8 @@ $("natural").addEventListener("click", () => run("more_natural"));
 $("copy").addEventListener("click", () => {
   const d = state.last;
   if (!d) return;
-  copyText(d.mode === "dictionary" ? $("output").innerText : d.translation);
+  const shown = $("furigana").checked && d.furigana ? d.furigana.result : d;
+  copyText(d.mode === "dictionary" ? $("output").innerText : shown.translation);
 });
 $("clear").addEventListener("click", () => { $("input").value = ""; $("input").focus(); updateControls(); });
 $("swap").addEventListener("click", () => {

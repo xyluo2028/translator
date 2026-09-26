@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 
@@ -11,6 +11,22 @@ RerunStyle = Literal["retry", "more_literal", "more_natural"]
 @dataclass(frozen=True)
 class RerunHint:
     style: RerunStyle
+
+
+@dataclass(frozen=True)
+class SpellingCorrection:
+    word: str
+    suggestion: str
+    alternatives: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class SpellingFix:
+    """Source text was corrected before translating ("did you mean ...?")."""
+
+    original: str
+    corrected: str
+    corrections: list[SpellingCorrection]
 
 
 @dataclass(frozen=True)
@@ -27,6 +43,8 @@ class TranslateRequest:
     temperature: float = 0.2
     # Overrides the provider's configured model for this request.
     model: str | None = None
+    # Correct likely misspellings in `text` before translating (needs the optional `text` extra).
+    spellcheck: bool = True
 
 
 @dataclass(frozen=True)
@@ -38,6 +56,7 @@ class TranslateResult:
     provider: str | None = None
     model: str | None = None
     latency_ms: int | None = None
+    spelling: SpellingFix | None = None
 
 
 @dataclass(frozen=True)
@@ -61,4 +80,5 @@ class DictionaryResult:
     provider: str | None = None
     model: str | None = None
     latency_ms: int | None = None
+    spelling: SpellingFix | None = None
 

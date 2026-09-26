@@ -5,6 +5,7 @@ import random
 from dataclasses import replace
 from typing import Any, TypeVar
 
+from translator_app import spelling
 from translator_app.config import AppConfig
 from translator_app.hf_transformers import TransformersError, chat_json as hf_chat_json, chat_messages as hf_chat_messages
 from translator_app.models import (
@@ -213,6 +214,15 @@ def resolve_model(request: TranslateRequest, config: AppConfig) -> tuple[str, Pr
 def translate_text(request: TranslateRequest, *, config: AppConfig) -> TranslateResult | DictionaryResult:
     if config.provider.name not in ("ollama", "transformers"):
         raise ValueError(f"Unsupported provider: {config.provider.name!r}")
+
+    fix = spelling.check(request.text, source_lang=request.source_lang) if request.spellcheck else None
+    if fix is None:
+        return _translate(request, config=config)
+    result = _translate(replace(request, text=fix.corrected), config=config)
+    return replace(result, spelling=fix)
+
+
+def _translate(request: TranslateRequest, *, config: AppConfig) -> TranslateResult | DictionaryResult:
 
     model, style = resolve_model(request, config)
     if style != "json":

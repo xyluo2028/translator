@@ -67,6 +67,7 @@ def _run_case(
         "--provider",
         provider,
         "--json",
+        "--no-spellcheck",  # benchmark inputs are exact; don't let the corrector touch them
     ]
     if model:
         cmd += ["--model", model]
