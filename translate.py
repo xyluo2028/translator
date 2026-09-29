@@ -6,9 +6,13 @@ import json
 import sys
 from dataclasses import asdict, replace
 
+from translator_app import furigana
+
 from translator_app.config import ProviderConfig, load_config
-from translator_app.core import translate_text
+from translator_app.core import ProviderResponseParseError, translate_text
+from translator_app.hf_transformers import TransformersError
 from translator_app.models import RerunHint, TranslateRequest
+from translator_app.ollama import OllamaError
 
 
 def _read_text_from_stdin() -> str:
@@ -24,6 +28,7 @@ def main(argv: list[str] | None = None) -> int:
 
     parser.add_argument("--config", default="config.toml", help="Path to config TOML.")
     parser.add_argument("--provider", choices=("ollama", "transformers"), default=None)
+    parser.add_argument("--model", default=None, help="Override the provider's configured model.")
     parser.add_argument("--mode", choices=("translate", "dictionary"), default=None)
     parser.add_argument("--from", dest="source_lang", default=None, help='Source language (or "auto").')
     parser.add_argument("--to", dest="target_lang", default=None, help="Target language.")
@@ -40,6 +45,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--seed", type=int, default=None, help="Optional seed to vary results.")
     parser.add_argument("--temperature", type=float, default=None, help="Sampling temperature override.")
+
+    parser.add_argument("--no-spellcheck", action="store_true", help="Translate the text exactly as typed.")
+    parser.add_argument("--furigana", action="store_true", help="Add kana readings to Japanese: 漢字（かんじ）.")
 
     parser.add_argument("--json", action="store_true", help="Print JSON result only.")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON output.")
@@ -64,25 +72,50 @@ def main(argv: list[str] | None = None) -> int:
         rerun=RerunHint(style=args.rerun) if args.rerun else None,
         seed=args.seed,
         temperature=args.temperature if args.temperature is not None else config.defaults.temperature,
+        model=args.model,
+        spellcheck=not args.no_spellcheck,
     )
 
     try:
         result = translate_text(request, config=config)
-    except Exception as exc:
-        if args.debug and getattr(exc, "raw_response", None):
-            print("=== raw_response ===", file=sys.stderr)
-            print(exc.raw_response, file=sys.stderr)
-            print("=== end raw_response ===", file=sys.stderr)
-        raise
+    except (OllamaError, TransformersError, ProviderResponseParseError, ValueError) as exc:
+        if args.debug:
+            if getattr(exc, "raw_response", None):
+                print("=== raw_response ===", file=sys.stderr)
+                print(exc.raw_response, file=sys.stderr)
+                print("=== end raw_response ===", file=sys.stderr)
+            raise
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     payload = asdict(result)
+    source_furigana = None
+    if args.furigana:
+        if not furigana.available():
+            print("error: --furigana needs the text extra: pip install -e '.[text]'", file=sys.stderr)
+            return 1
+        annotated = furigana.annotate_result(
+            payload,
+            source_text=(result.spelling.corrected if result.spelling else request.text),
+            source_lang=request.source_lang,
+            target_lang=request.target_lang,
+        )
+        payload, source_furigana = annotated["result"], annotated["source"]
 
     if args.json:
+        if source_furigana:
+            payload["source_furigana"] = source_furigana
         if args.pretty:
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         else:
             print(json.dumps(payload, ensure_ascii=False))
         return 0
+
+    fix = payload.get("spelling")
+    if fix:
+        print(f"Did you mean: {fix['corrected']}  (translated the corrected text; --no-spellcheck to keep yours)\n")
+    if source_furigana and request.mode != "dictionary":  # dictionary mode annotates the term itself
+        print(f"Source: {source_furigana}\n")
 
     if request.mode == "dictionary":
         print(f"Term: {payload.get('term')}")

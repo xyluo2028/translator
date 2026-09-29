@@ -37,23 +37,30 @@ Suggested usage:
 Example:
 
 ```bash
-python3 translate.py "How are you?" --from auto --to JA --provider transformers
+.venv/bin/python translate.py "How are you?" --from auto --to JA --provider transformers
 ```
 
 Dry-run the suite:
 
 ```bash
-python3 benchmark.py --provider transformers --dry-run
+.venv/bin/python benchmark.py --provider transformers --dry-run
 ```
 
 Run the full suite and save JSONL results:
 
 ```bash
-python3 benchmark.py --provider transformers
+.venv/bin/python benchmark.py --provider transformers
 ```
 
 Run only one direction:
 
 ```bash
-python3 benchmark.py --provider transformers --source-lang EN --target-lang JA
+.venv/bin/python benchmark.py --provider transformers --source-lang EN --target-lang JA
+```
+
+The Hugging Face (`transformers`) examples need the project venv; see the main README's setup section.
+For the Ollama backend use `python3` and `--provider ollama`, optionally with `--model`:
+
+```bash
+python3 benchmark.py --provider ollama --model translategemma:12b --source-lang EN --target-lang JA
 ```
