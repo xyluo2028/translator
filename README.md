@@ -108,12 +108,13 @@ python3 --version   # must be 3.13 or newer
 
 ### 4. Spelling correction and Japanese readings (optional, recommended)
 
-Two small offline dictionaries (~55 MB, no model needed) power "Did you mean" and 漢字（かんじ） readings.
+Offline spelling and Japanese dictionaries power "Did you mean" and 漢字（かんじ） readings.
+The `text` extra also includes Lingua's bundled language models for source detection; no external API is used.
 They work with either backend. If you skipped step 3, create the venv first (`python3 -m venv .venv`).
 
 ```bash
 .venv/bin/pip install -e '.[text]'
-.venv/bin/python translate.py "midle" --to JA --furigana
+.venv/bin/python translate.py "midle" --from EN --to JA --furigana
 ```
 
 You should see `Did you mean: middle` and a Japanese translation with readings, e.g. 中央（ちゅうおう）.
@@ -140,8 +141,10 @@ This opens http://127.0.0.1:8765. Stop it with Ctrl+C.
   (e.g. `gpt-oss`, Gemma 4) and are greyed out for translation-only models.
 - **Did you mean**: misspelled source words are corrected before translating and shown above the result, e.g.
   "Did you mean: *middle*?". Click *Translate "midle" instead* to use your text as typed, or pick one of the other
-  suggestions. English is checked with *Detect language*; ES, FR, DE, IT, PT, NL, RU and a few others are checked
-  when you choose them as the source.
+  suggestions. *Detect language* identifies the source internally before applying the appropriate spelling
+  dictionary (EN, ES, FR, DE, IT, PT, NL, RU and a few others), including in dictionary mode. Ambiguous short
+  inputs stay unchanged; choose the source explicitly when needed. Detection runs offline using
+  [Lingua](https://github.com/pemistahl/lingua-py), included in the `text` extra.
 - **振り仮名** toggle adds readings to Japanese kanji as 漢字（かんじ）: in the translation when the target is Japanese,
   and under the input box when the source is Japanese. Chinese text is never annotated.
 - **History** keeps your last 30 translations in the browser; click one to restore it.
@@ -157,7 +160,7 @@ python3 translate.py "打ち合わせ" --mode dictionary --to EN              # 
 python3 translate.py "How are you?" --to JA --tone polite --model gpt-oss:latest
 python3 translate.py "Hello" --from EN --to KO --json --pretty         # structured JSON output
 echo "Bonjour tout le monde" | python3 translate.py --to EN             # read from stdin
-.venv/bin/python translate.py "Where is teh station?" --to JA --furigana # spelling fix + readings
+.venv/bin/python translate.py "Where is teh station?" --to JA --furigana # auto-detection, spelling fix + readings
 .venv/bin/python translate.py "hello" --to JA --provider transformers --model tencent/HY-MT1.5-1.8B
 ```
 
@@ -169,7 +172,7 @@ echo "Bonjour tout le monde" | python3 translate.py --to EN             # read f
 | `--mode translate\|dictionary` | Translation or dictionary lookup |
 | `--tone NAME`, `--tone-instructions TEXT` | Style presets (`casual`, `formal`, `polite`, `spoken`, `business`); general models only |
 | `--rerun retry\|more_literal\|more_natural` | Regenerate; translation-only models support `retry` only |
-| `--no-spellcheck` | Translate exactly what you typed (spelling correction is on by default when installed) |
+| `--no-spellcheck` | Translate exactly what you typed (spelling correction is on by default when installed, using the selected or confidently detected source language) |
 | `--furigana` | Add readings to Japanese kanji: 漢字（かんじ） (needs the `text` extra) |
 | `--json`, `--pretty` | Print the result as JSON |
 | `--debug` | On errors, show the raw model output and full traceback |
@@ -202,10 +205,11 @@ How the app treats them:
   every feature. Any Ollama chat model you pull shows up in the web UI automatically.
 - **Dictionary mode** always runs on a general model. If a translation-only model is selected, the app uses
   `dictionary_model` from `config.toml` for that backend.
-- **Auto-detect** with translation-only models guesses from the script: kana → JA, hangul → KO, han → ZH.
-  Latin-script text is treated as English and shown as no detection. Japanese written only in kanji is guessed
-  as Chinese, and TranslateGemma is told French/German/Spanish text is English, so choose the source language
-  explicitly in those cases.
+- **Auto-detect** with the `text` extra first identifies the source among the app's translation and spelling
+  languages, then passes that language to spelling correction and translation. Uncertain detection skips
+  spelling edits. Without the extra, or when detection is uncertain, translation-only models fall back to
+  script guesses: kana → JA, hangul → KO, han → ZH, Latin → English (not reported as detected).
+  Choose the source explicitly for ambiguous short text or languages outside the app's detection set.
 
 ## Configuration
 
@@ -250,7 +254,7 @@ temperature = 0.2
 | `This model is gated: accept its license …` | Accept the license on the model's Hugging Face page, then `.venv/bin/hf auth login`. |
 | `requires the PIL library` or `No module named 'torchvision'` | Your venv predates these dependencies: `.venv/bin/pip install -e '.[transformers]'`. |
 | `Some parameters are on the meta device because they were offloaded to the disk` | Not enough free memory for the Hugging Face model, so it runs very slowly. Close other models (e.g. a running web UI, Ollama models via `ollama stop <model>`) or use `tencent/HY-MT1.5-1.8B`. |
-| `--furigana needs the text extra` / 振り仮名 toggle greyed out / no "Did you mean" | Install [step 4](#4-spelling-correction-and-japanese-readings-optional-recommended) and run with `.venv/bin/python`. |
+| `--furigana needs the text extra` / 振り仮名 toggle greyed out / no "Did you mean" | Install or update [step 4](#4-spelling-correction-and-japanese-readings-optional-recommended) and run with `.venv/bin/python`. Ambiguous short text may need an explicit source language for spelling correction. Restart the server after upgrading. |
 | A correct word was "corrected" (names, jargon) | Click *Translate "…" instead* in the web UI, or pass `--no-spellcheck`. Capitalized names mid-sentence are already left alone. |
 | A reading is wrong (e.g. unusual names) | Readings come from the UniDic dictionary and can't always know context; add fixes to `_READING_OVERRIDES` in `translator_app/furigana.py`. |
 | First translation is slow | Normal: the model is loading (Ollama ~5–20 s, Hugging Face ~10–30 s). Later requests are fast. |

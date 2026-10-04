@@ -18,6 +18,9 @@ class SpellingCorrection:
     word: str
     suggestion: str
     alternatives: list[str] = field(default_factory=list)
+    # Half-open Unicode code point offsets in SpellingFix.original.
+    start: int | None = None
+    end: int | None = None
 
 
 @dataclass(frozen=True)
@@ -43,7 +46,7 @@ class TranslateRequest:
     temperature: float = 0.2
     # Overrides the provider's configured model for this request.
     model: str | None = None
-    # Correct likely misspellings in `text` before translating (needs the optional `text` extra).
+    # Correct likely misspellings after resolving the source language (needs the optional `text` extra).
     spellcheck: bool = True
 
 
@@ -81,4 +84,3 @@ class DictionaryResult:
     model: str | None = None
     latency_ms: int | None = None
     spelling: SpellingFix | None = None
-

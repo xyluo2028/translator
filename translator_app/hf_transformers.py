@@ -288,16 +288,13 @@ def _generate(
     if "repeat_penalty" in sampling:
         generation_kwargs["repetition_penalty"] = sampling["repeat_penalty"]
 
-    if seed is not None:
-        try:
-            import torch
-        except ImportError:
-            pass
-        else:
-            torch.manual_seed(seed)
-
     try:
         with _GENERATE_LOCK:
+            # Seeding changes shared RNG state, so it must not run during another generation.
+            if seed is not None:
+                import torch
+
+                torch.manual_seed(seed)
             outputs = loaded.model.generate(**inputs, **generation_kwargs)
     except Exception as exc:  # noqa: BLE001
         raise TransformersError(f"Transformers generation failed for model {config.model!r}: {exc}") from exc
