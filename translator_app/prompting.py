@@ -70,6 +70,7 @@ def build_user_prompt(request: TranslateRequest) -> str:
     if request.mode == "dictionary":
         return (
             f"Explain and translate as a dictionary entry.\n"
+            f"Source language: {request.source_lang}.\n"
             f"Target language for meanings/examples: {request.target_lang}.\n"
             f"Term: {request.text.strip()}\n"
         )

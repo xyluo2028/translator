@@ -304,7 +304,6 @@ function updateControls() {
   if (dict && plain && dictModel) hint = `Dictionary uses ${shortName(dictModel)}`;
   else if (plain) hint = "Tone needs a general model";
   $("modelHint").textContent = hint;
-  $("source").disabled = dict;
   $("count").textContent = `${$("input").value.length} chars`;
   $("go").disabled = state.busy || !$("input").value.trim();
   const has = !!state.last && !state.busy;
@@ -327,7 +326,7 @@ async function run(rerun = null, overrides = null) {
   const body = again ? { ...state.lastRequest, rerun, ...overrides } : {
     text,
     mode: state.mode,
-    source_lang: state.mode === "dictionary" ? "auto" : $("source").value,
+    source_lang: $("source").value,
     target_lang: $("target").value,
     tone: $("tone").disabled ? "neutral" : $("tone").value,
     provider: currentModel()?.provider || null,
@@ -403,42 +402,53 @@ function render(raw) {
   $("meta").textContent = bits.filter(Boolean).join(" · ");
 }
 
+function spellingParts(fix, chosen = null, alt = null) {
+  // Python sends Unicode code point offsets; JS string offsets count UTF-16 units instead.
+  const original = Array.from(fix.original);
+  const parts = [];
+  let pos = 0;
+  for (const c of fix.corrections) {
+    if (!Number.isInteger(c.start) || !Number.isInteger(c.end) || c.start < pos ||
+        c.end <= c.start || c.end > original.length || original.slice(c.start, c.end).join("") !== c.word) {
+      return null; // Older history entries lack offsets: display their saved correction without guessing.
+    }
+    parts.push({ text: original.slice(pos, c.start).join(""), corrected: false });
+    parts.push({ text: c === chosen ? alt : c.suggestion, corrected: true });
+    pos = c.end;
+  }
+  parts.push({ text: original.slice(pos).join(""), corrected: false });
+  return parts;
+}
+
 function renderSpelling(fix) {
   // "Did you mean: <b>middle</b>?" rebuilt from the original so each corrected word can be highlighted.
   const dym = el("div", { className: "dym" }, "Did you mean: ");
-  let rest = fix.original;
-  for (const c of fix.corrections) {
-    const i = rest.indexOf(c.word);
-    if (i < 0) continue;
-    dym.append(rest.slice(0, i), el("b", { textContent: c.suggestion }));
-    rest = rest.slice(i + c.word.length);
+  const parts = spellingParts(fix);
+  if (parts) {
+    for (const part of parts) dym.append(part.corrected ? el("b", { textContent: part.text }) : part.text);
+  } else {
+    dym.append(el("b", { textContent: fix.corrected }));
   }
-  dym.append(rest, /[.!?。！？]\s*$/.test(fix.original) ? "" : "?");
+  dym.append(/[.!?。！？]\s*$/.test(fix.original) ? "" : "?");
   const links = el("div", { className: "links" });
   const shortOriginal = fix.original.length > 40 ? `${fix.original.slice(0, 38).trimEnd()}…` : fix.original;
   links.append(el("button", { type: "button", className: "linkish", textContent: `Translate “${shortOriginal}” instead`, title: fix.original,
     onclick: () => run(null, { text: fix.original, spellcheck: false }) }));
-  for (const c of fix.corrections) {
+  for (const c of parts ? fix.corrections : []) {
     for (const alt of c.alternatives || []) {
       const label = fix.corrections.length > 1 ? `${c.word} → ${alt}` : alt;
       links.append(el("button", { type: "button", className: "linkish", textContent: label, title: `Use “${alt}” instead`,
         onclick: () => run(null, { text: replaceWord(fix, c, alt), spellcheck: false }) }));
     }
   }
-  if (fix.corrections.some((c) => c.alternatives?.length)) links.insertBefore(el("span", { textContent: "· Or:" }), links.children[1]);
+  if (parts && fix.corrections.some((c) => c.alternatives?.length)) links.insertBefore(el("span", { textContent: "· Or:" }), links.children[1]);
   return el("div", { className: "spell" }, dym, links);
 }
 
 function replaceWord(fix, chosen, alt) {
   // Apply every suggestion except `chosen`, which gets `alt`.
-  let out = "", rest = fix.original;
-  for (const c of fix.corrections) {
-    const i = rest.indexOf(c.word);
-    if (i < 0) continue;
-    out += rest.slice(0, i) + (c === chosen ? alt : c.suggestion);
-    rest = rest.slice(i + c.word.length);
-  }
-  return out + rest;
+  const parts = spellingParts(fix, chosen, alt);
+  return parts ? parts.map((part) => part.text).join("") : fix.corrected;
 }
 
 async function copyText(text) {
@@ -473,7 +483,7 @@ function renderHistory() {
 
 function restore(h) {
   $("input").value = h.req.text;
-  if (h.req.mode !== "dictionary") $("source").value = h.req.source_lang;
+  $("source").value = h.req.source_lang;
   $("target").value = h.req.target_lang;
   setMode(h.req.mode);
   const key = h.req.model && `${h.req.provider || "ollama"}::${h.req.model}`;
