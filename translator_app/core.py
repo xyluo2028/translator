@@ -217,11 +217,8 @@ def translate_text(request: TranslateRequest, *, config: AppConfig) -> Translate
 
     detected = spelling.detect_source_language(request.text) if request.source_lang.lower() == "auto" else None
     prepared = replace(request, source_lang=detected) if detected else request
-    # When detection was inconclusive, preserve the input instead of guessing a spelling dictionary.
-    fix = (
-        spelling.check(prepared.text, source_lang=prepared.source_lang)
-        if prepared.spellcheck and prepared.source_lang.lower() != "auto" else None
-    )
+    # Inconclusive detection keeps "auto" for translation; spelling.check applies only its cautious English fallback.
+    fix = spelling.check(prepared.text, source_lang=prepared.source_lang) if prepared.spellcheck else None
     if fix:
         prepared = replace(prepared, text=fix.corrected)
     result = _translate(prepared, config=config)

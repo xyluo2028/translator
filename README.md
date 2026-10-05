@@ -143,8 +143,9 @@ This opens http://127.0.0.1:8765. Stop it with Ctrl+C.
 - **Did you mean**: misspelled source words are corrected before translating and shown above the result, e.g.
   "Did you mean: *middle*?". Click *Translate "midle" instead* to use your text as typed, or pick one of the other
   suggestions. *Detect language* identifies the source internally before applying the appropriate spelling
-  dictionary (EN, ES, FR, DE, IT, PT, NL, RU and a few others), including in dictionary mode. Ambiguous short
-  inputs stay unchanged; choose the source explicitly when needed. Detection runs offline using
+  dictionary (EN, ES, FR, DE, IT, PT, NL, RU and a few others), including in dictionary mode. When detection is
+  unsure (common for short input like "boook"), only clear English typos are fixed; words that are real in another
+  dictionary ("hola", "merci") stay unchanged. Choose the source explicitly when needed. Detection runs offline using
   [Lingua](https://github.com/pemistahl/lingua-py), included in the `text` extra.
 - **振り仮名** toggle adds readings to Japanese kanji as 漢字（かんじ）: in the translation when the target is Japanese,
   and under the input box when the source is Japanese. Chinese text is never annotated.
@@ -207,8 +208,9 @@ How the app treats them:
 - **Dictionary mode** always runs on a general model. If a translation-only model is selected, the app uses
   `dictionary_model` from `config.toml` for that backend.
 - **Auto-detect** with the `text` extra first identifies the source among the app's translation and spelling
-  languages, then passes that language to spelling correction and translation. Uncertain detection skips
-  spelling edits. Without the extra, or when detection is uncertain, translation-only models fall back to
+  languages, then passes that language to spelling correction and translation. Uncertain detection limits
+  spelling to one-letter English fixes for words no other dictionary knows. Without the extra, or when
+  detection is uncertain, translation-only models fall back to
   script guesses: kana → JA, hangul → KO, han → ZH, Latin → English (not reported as detected).
   Choose the source explicitly for ambiguous short text or languages outside the app's detection set.
 

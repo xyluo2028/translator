@@ -13,11 +13,13 @@ MAX_WORDS = 200
 MAX_SUGGESTIONS = 3
 MIN_LANGUAGE_CONFIDENCE = 0.4
 MIN_LANGUAGE_MARGIN = 0.2
+# Latin-script dictionaries consulted before treating an undetected word as an English typo.
+_LATIN_LANGS = SUPPORTED_LANGS - {"EN", "RU", "AR", "FA"}
 
 _WORD = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)*")
 
 
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=2 * len(SUPPORTED_LANGS))
 def _checker(lang: str, distance: int) -> Any:
     from spellchecker import SpellChecker
 
@@ -82,12 +84,19 @@ def _match_case(original: str, suggestion: str) -> str:
 def check(text: str, *, source_lang: str) -> SpellingFix | None:
     """Return corrections for misspelled words, or None if nothing to fix (or checking doesn't apply).
 
-    Auto mode first identifies the language with the offline detector. Ambiguous inputs stay
-    unchanged; explicit or confidently detected supported languages allow edits up to distance 2.
+    Auto mode first identifies the language with the offline detector; explicit or confidently detected
+    supported languages allow edits up to distance 2. The detector is often unsure about short or misspelled
+    Latin-script input ("boook"), so that falls back to English at distance 1, unless most words aren't English
+    or an unknown word is a real word in another dictionary ("hola", "merci").
     """
-    lang = source_lang.upper()
+    from translator_app.prompting import detect_language
+
+    lang, distance = source_lang.upper(), 2
+    fallback = False
     if lang == "AUTO":
         lang = detect_source_language(text)
+        if lang is None and detect_language(text) == "EN":
+            lang, distance, fallback = "EN", 1, True
     if lang not in SUPPORTED_LANGS:
         return None
     if not available():
@@ -96,12 +105,17 @@ def check(text: str, *, source_lang: str) -> SpellingFix | None:
     matches = list(_WORD.finditer(text))
     if not matches or len(matches) > MAX_WORDS:
         return None
-    checker = _checker(lang, 2)
+    checker = _checker(lang, distance)
 
     words = [m.group().replace("’", "'").lower() for m in matches]
     unknown = checker.unknown(words)
     if not unknown:
         return None
+    if fallback:
+        if len(words) > 1 and sum(w in unknown for w in words) * 2 > len(words):
+            return None  # mostly unknown words: probably not English at all
+        if any(_checker(other, 2).known(unknown) for other in sorted(_LATIN_LANGS)):
+            return None  # a real word elsewhere, not an English typo
 
     corrections: list[SpellingCorrection] = []
     pieces: list[str] = []
