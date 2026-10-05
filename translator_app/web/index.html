@@ -160,7 +160,7 @@
       <button type="button" class="swap" id="swap" title="Swap languages" aria-label="Swap languages">⇄</button>
       <select id="target" aria-label="Target language"></select>
     </div>
-    <label class="field">Tone
+    <label class="field" id="toneLabel">Tone
       <select id="tone" aria-label="Tone">
         <option value="neutral">Neutral</option>
         <option value="casual">Casual</option>
@@ -208,7 +208,7 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-const state = { info: null, mode: "translate", busy: false, last: null, lastRequest: null };
+const state = { info: null, mode: "translate", translationTone: "neutral", busy: false, last: null, lastRequest: null };
 const HISTORY_KEY = "translator.history.v1";
 const PREFS_KEY = "translator.prefs.v1";
 
@@ -258,7 +258,7 @@ async function init() {
   tgt.value = prefs.target || info.defaults.target_lang || "ZH";
   if (!src.value) src.value = "auto";
   if (!tgt.value) tgt.value = "ZH";
-  $("tone").value = prefs.tone || info.defaults.tone || "neutral";
+  state.translationTone = prefs.tone || info.defaults.tone || "neutral";
   const fg = $("furigana");
   fg.disabled = !info.features?.furigana;
   fg.checked = !fg.disabled && prefs.furigana !== false;
@@ -284,7 +284,7 @@ async function init() {
 }
 
 function savePrefs() {
-  store(PREFS_KEY, { source: $("source").value, target: $("target").value, tone: $("tone").value, model: $("model").value, mode: state.mode, furigana: $("furigana").checked });
+  store(PREFS_KEY, { source: $("source").value, target: $("target").value, tone: state.translationTone, model: $("model").value, mode: state.mode, furigana: $("furigana").checked });
 }
 
 function setMode(mode) {
@@ -299,9 +299,14 @@ function updateControls() {
   const plain = isTranslationOnly();
   const dict = state.mode === "dictionary";
   const dictModel = state.info?.dictionary_models[currentModel()?.provider];
-  $("tone").disabled = plain && !dict;
+  $("tone").disabled = dict || plain;
+  $("tone").value = $("tone").disabled ? "neutral" : state.translationTone;
+  $("toneLabel").title = dict ? "Dictionary entries always use a neutral tone."
+    : plain ? "Tone needs a general model, such as Gemma or gpt-oss." : "";
   let hint = "";
-  if (dict && plain && dictModel) hint = `Dictionary uses ${shortName(dictModel)}`;
+  if (dict) hint = plain && dictModel
+    ? `Dictionary uses ${shortName(dictModel)} · neutral tone`
+    : "Dictionary uses neutral tone";
   else if (plain) hint = "Tone needs a general model";
   $("modelHint").textContent = hint;
   $("source").disabled = dict;
@@ -486,7 +491,11 @@ function restore(h) {
 }
 
 for (const b of document.querySelectorAll(".seg button")) b.addEventListener("click", () => { setMode(b.dataset.mode); savePrefs(); });
-for (const id of ["source", "target", "tone", "model"]) $(id).addEventListener("change", () => { savePrefs(); updateControls(); });
+for (const id of ["source", "target", "tone", "model"]) $(id).addEventListener("change", () => {
+  if (id === "tone") state.translationTone = $("tone").value;
+  savePrefs();
+  updateControls();
+});
 $("input").addEventListener("input", updateControls);
 $("furigana").addEventListener("change", () => { savePrefs(); if (state.last) render(state.last); });
 document.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run(); } });

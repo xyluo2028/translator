@@ -22,9 +22,8 @@ def build_system_prompt(request: TranslateRequest) -> str:
         return (
             base
             + "\n"
-            + tone_line
-            + "\n"
             + "Task: Return dictionary-style entries with multiple senses.\n"
+            + "Use a neutral, factual dictionary style; describe register in usage notes.\n"
             + "Constraints:\n"
             + "- Provide up to 2 parts-of-speech and up to 3 senses each.\n"
             + "- Keep example sentences short.\n"
