@@ -1,6 +1,6 @@
 [provider]
 # Default backend: "ollama" or "transformers" (local Hugging Face models). The web UI can pick either per request.
-name = "ollama"
+name = "transformers"
 
 [ollama]
 host = "http://localhost:11434"
