@@ -16,7 +16,7 @@ from translator_app.prompting import build_user_prompt
 class SpellingTests(unittest.TestCase):
     def test_auto_preserves_foreign_words_before_provider_call(self):
         for mode in ("translate", "dictionary"):
-            for text in ("hola", "merci", "salut", "hola hola", "Je suis ici", "tyype"):
+            for text in ("hola", "merci", "salut", "hola hola", "Je suis ici", "libro", "danke"):
                 with self.subTest(mode=mode, text=text):
                     request = TranslateRequest(text=text, source_lang="auto", target_lang="EN", mode=mode)
                     with patch.object(core, "_translate", return_value=TranslateResult("result")) as provider:
@@ -46,14 +46,27 @@ class SpellingTests(unittest.TestCase):
                     if mode == "translate":
                         self.assertEqual(result.detected_source_lang, lang)
 
-    def test_uncertain_detection_skips_spelling_and_preserves_auto(self):
+    def test_uncertain_detection_preserves_auto(self):
         request = TranslateRequest(text="ambiguous", source_lang="auto", target_lang="JA")
         with patch.object(spelling, "detect_source_language", return_value=None), \
-                patch.object(spelling, "check") as check, \
+                patch.object(spelling, "check", return_value=None) as check, \
                 patch.object(core, "_translate", return_value=TranslateResult("result")) as provider:
-            core.translate_text(request, config=AppConfig())
-        check.assert_not_called()
+            result = core.translate_text(request, config=AppConfig())
+        check.assert_called_once_with("ambiguous", source_lang="auto")
         self.assertEqual(provider.call_args.args[0], request)
+        self.assertIsNone(result.detected_source_lang)
+
+    @unittest.skipUnless(spelling.available(), "requires the optional text extra")
+    def test_uncertain_detection_falls_back_to_english_typos(self):
+        cases = (("boook", "book"), ("tyype", "type"), ("I read a boook", "I read a book"))
+        for text, corrected in cases:
+            with self.subTest(text=text), patch.object(spelling, "detect_source_language", return_value=None):
+                self.assertEqual(spelling.check(text, source_lang="auto").corrected, corrected)
+                request = TranslateRequest(text=text, source_lang="auto", target_lang="ZH")
+                with patch.object(core, "_translate", return_value=TranslateResult("result")) as provider:
+                    result = core.translate_text(request, config=AppConfig())
+                self.assertEqual((provider.call_args.args[0].text, provider.call_args.args[0].source_lang), (corrected, "auto"))
+                self.assertIsNone(result.detected_source_lang)
 
     def test_detected_language_is_used_without_spelling_edits(self):
         for enabled in (True, False):
