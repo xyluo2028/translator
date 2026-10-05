@@ -5,9 +5,10 @@ requires-python = ">=3.13"
 dependencies = []
 
 [project.optional-dependencies]
-# Spelling correction ("did you mean") and Japanese furigana. Pure offline dictionaries, no model needed.
+# Offline language detection, spelling correction ("did you mean"), and Japanese furigana.
 text = [
   "fugashi>=1.3.0",
+  "lingua-language-detector>=2.1,<3",
   "pyspellchecker>=0.8.0",
   "unidic-lite>=1.0.8",
 ]

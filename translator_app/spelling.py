@@ -11,6 +11,8 @@ from translator_app.models import SpellingCorrection, SpellingFix
 SUPPORTED_LANGS = {"EN", "ES", "FR", "PT", "DE", "IT", "RU", "AR", "NL", "LV", "EU", "FA"}
 MAX_WORDS = 200
 MAX_SUGGESTIONS = 3
+MIN_LANGUAGE_CONFIDENCE = 0.4
+MIN_LANGUAGE_MARGIN = 0.2
 
 _WORD = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)*")
 
@@ -28,6 +30,37 @@ def available() -> bool:
     except Exception:  # noqa: BLE001 - package not installed
         return False
     return True
+
+
+@lru_cache(maxsize=1)
+def _detector() -> Any:
+    from lingua import IsoCode639_1, LanguageDetectorBuilder
+    from translator_app.prompting import LANGUAGES
+
+    # Include translation languages without spelling dictionaries too, so they aren't forced
+    # into one of the spellcheck languages. The bundled models run entirely offline.
+    codes = {code.split("-")[0] for code in LANGUAGES} | SUPPORTED_LANGS
+    return LanguageDetectorBuilder.from_iso_codes_639_1(
+        *(getattr(IsoCode639_1, code) for code in sorted(codes))
+    ).build()
+
+
+def detect_source_language(text: str) -> str | None:
+    """Identify an app-supported language, declining ambiguous input or missing dependencies."""
+    if not text.strip():
+        return None
+    try:
+        detector = _detector()
+    except ImportError:
+        return None
+    scores = detector.compute_language_confidence_values(text)
+    if not scores:
+        return None
+    best = scores[0]
+    runner_up = scores[1].value if len(scores) > 1 else 0.0
+    if best.value < MIN_LANGUAGE_CONFIDENCE or best.value - runner_up < MIN_LANGUAGE_MARGIN:
+        return None
+    return best.language.iso_code_639_1.name
 
 
 def _should_skip(word: str, start: int, text: str) -> bool:
@@ -49,20 +82,13 @@ def _match_case(original: str, suggestion: str) -> str:
 def check(text: str, *, source_lang: str) -> SpellingFix | None:
     """Return corrections for misspelled words, or None if nothing to fix (or checking doesn't apply).
 
-    An explicit source language allows edits up to distance 2. With "auto" we only get here for Latin-script
-    text, can't be sure it's English, and use distance 1 plus a mostly-known-words check so that e.g. French
-    isn't "corrected" into English.
+    Auto mode first identifies the language with the offline detector. Ambiguous inputs stay
+    unchanged; explicit or confidently detected supported languages allow edits up to distance 2.
     """
-    from translator_app.prompting import detect_language
-
     lang = source_lang.upper()
     if lang == "AUTO":
-        if detect_language(text) != "EN":
-            return None
-        lang, distance = "EN", 1
-    elif lang in SUPPORTED_LANGS:
-        distance = 2
-    else:
+        lang = detect_source_language(text)
+    if lang not in SUPPORTED_LANGS:
         return None
     if not available():
         return None
@@ -70,14 +96,12 @@ def check(text: str, *, source_lang: str) -> SpellingFix | None:
     matches = list(_WORD.finditer(text))
     if not matches or len(matches) > MAX_WORDS:
         return None
-    checker = _checker(lang, distance)
+    checker = _checker(lang, 2)
 
     words = [m.group().replace("’", "'").lower() for m in matches]
     unknown = checker.unknown(words)
     if not unknown:
         return None
-    if source_lang.upper() == "AUTO" and len(words) > 1 and len(unknown) * 2 > len(words):
-        return None  # mostly unknown words: probably not English at all
 
     corrections: list[SpellingCorrection] = []
     pieces: list[str] = []
@@ -96,6 +120,8 @@ def check(text: str, *, source_lang: str) -> SpellingFix | None:
                 word=word,
                 suggestion=suggestion,
                 alternatives=[_match_case(word, w) for w in ranked[1:]],
+                start=m.start(),
+                end=m.end(),
             )
         )
         pieces.append(text[pos : m.start()])

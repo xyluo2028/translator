@@ -215,11 +215,19 @@ def translate_text(request: TranslateRequest, *, config: AppConfig) -> Translate
     if config.provider.name not in ("ollama", "transformers"):
         raise ValueError(f"Unsupported provider: {config.provider.name!r}")
 
-    fix = spelling.check(request.text, source_lang=request.source_lang) if request.spellcheck else None
-    if fix is None:
-        return _translate(request, config=config)
-    result = _translate(replace(request, text=fix.corrected), config=config)
-    return replace(result, spelling=fix)
+    detected = spelling.detect_source_language(request.text) if request.source_lang.lower() == "auto" else None
+    prepared = replace(request, source_lang=detected) if detected else request
+    # When detection was inconclusive, preserve the input instead of guessing a spelling dictionary.
+    fix = (
+        spelling.check(prepared.text, source_lang=prepared.source_lang)
+        if prepared.spellcheck and prepared.source_lang.lower() != "auto" else None
+    )
+    if fix:
+        prepared = replace(prepared, text=fix.corrected)
+    result = _translate(prepared, config=config)
+    if detected and isinstance(result, TranslateResult):
+        result = replace(result, detected_source_lang=detected)
+    return replace(result, spelling=fix) if fix else result
 
 
 def _translate(request: TranslateRequest, *, config: AppConfig) -> TranslateResult | DictionaryResult:
