@@ -138,7 +138,8 @@ This opens http://127.0.0.1:8765. Stop it with Ctrl+C.
 - Choose source (or *Detect language*) and target languages; ⇄ swaps them and moves the result into the input.
 - **Translate** / **Dictionary** switch modes. Press ⌘+Enter (macOS) or Ctrl+Enter to run.
 - **Retry** samples a new translation. **Tone**, **More literal** and **More natural** need a general model
-  (e.g. `gpt-oss`, Gemma 4) and are greyed out for translation-only models.
+  (e.g. `gpt-oss`, Gemma 4) and are greyed out for translation-only models. **Dictionary** always uses a
+  neutral tone; the tone selector is disabled, and your translation tone choice is restored when supported.
 - **Did you mean**: misspelled source words are corrected before translating and shown above the result, e.g.
   "Did you mean: *middle*?". Click *Translate "midle" instead* to use your text as typed, or pick one of the other
   suggestions. *Detect language* identifies the source internally before applying the appropriate spelling
@@ -170,7 +171,7 @@ echo "Bonjour tout le monde" | python3 translate.py --to EN             # read f
 | `--provider ollama\|transformers` | Backend (default: `[provider].name` in `config.toml`) |
 | `--model NAME` | Model for this run (Ollama tag or Hugging Face repo id) |
 | `--mode translate\|dictionary` | Translation or dictionary lookup |
-| `--tone NAME`, `--tone-instructions TEXT` | Style presets (`casual`, `formal`, `polite`, `spoken`, `business`); general models only |
+| `--tone NAME`, `--tone-instructions TEXT` | Translation style presets (`casual`, `formal`, `polite`, `spoken`, `business`); general models only, ignored in dictionary mode |
 | `--rerun retry\|more_literal\|more_natural` | Regenerate; translation-only models support `retry` only |
 | `--no-spellcheck` | Translate exactly what you typed (spelling correction is on by default when installed, using the selected or confidently detected source language) |
 | `--furigana` | Add readings to Japanese kanji: 漢字（かんじ） (needs the `text` extra) |
