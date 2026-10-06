@@ -18,6 +18,10 @@ class OllamaConfig:
     model: str = "hf.co/tencent/HY-MT1.5-7B-GGUF:Q4_K_M"
     # Used for dictionary mode (and tone) when `model` is a translation-only model.
     dictionary_model: str = "gpt-oss:latest"
+    options: dict[str, Any] = field(default_factory=dict)
+    enable_thinking: bool | None = None
+    structured_output: bool = True
+    api: str = "chat"
 
 
 @dataclass(frozen=True)
@@ -29,6 +33,9 @@ class TransformersConfig:
     models: tuple[str, ...] = field(default_factory=tuple)
     device_map: str = "auto"
     dtype: str = "auto"
+    quantization: str = "none"
+    attn_implementation: str = "auto"
+    max_cached_models: int = 2
     max_new_tokens: int = 512
     enable_thinking: bool = False
     trust_remote_code: bool = False
@@ -77,7 +84,17 @@ def load_config(path: str | Path) -> AppConfig:
         host=str(ollama_table.get("host", "http://localhost:11434")),
         model=str(ollama_table.get("model", OllamaConfig.model)),
         dictionary_model=str(ollama_table.get("dictionary_model", OllamaConfig.dictionary_model)),
+        options=_get_table(ollama_table, "options"),
+        enable_thinking=ollama_table.get("enable_thinking"),
+        structured_output=ollama_table.get("structured_output", True),
+        api=str(ollama_table.get("api", "chat")),
     )
+    if ollama.enable_thinking is not None and not isinstance(ollama.enable_thinking, bool):
+        raise TypeError('Expected "ollama.enable_thinking" to be a boolean')
+    if not isinstance(ollama.structured_output, bool):
+        raise TypeError('Expected "ollama.structured_output" to be a boolean')
+    if ollama.api not in ("chat", "generate"):
+        raise ValueError('Expected "ollama.api" to be "chat" or "generate"')
     max_new_tokens = transformers_table.get("max_new_tokens", 512)
     if not isinstance(max_new_tokens, int):
         raise TypeError('Expected "transformers.max_new_tokens" to be an integer')
@@ -87,6 +104,12 @@ def load_config(path: str | Path) -> AppConfig:
     trust_remote_code = transformers_table.get("trust_remote_code", False)
     if not isinstance(trust_remote_code, bool):
         raise TypeError('Expected "transformers.trust_remote_code" to be a boolean')
+    quantization = transformers_table.get("quantization", "none")
+    if quantization not in ("none", "4bit", "8bit"):
+        raise ValueError('Expected "transformers.quantization" to be "none", "4bit", or "8bit"')
+    max_cached_models = transformers_table.get("max_cached_models", 2)
+    if type(max_cached_models) is not int or max_cached_models < 1:
+        raise ValueError('Expected "transformers.max_cached_models" to be a positive integer')
 
     models = transformers_table.get("models", [])
     if not isinstance(models, list) or not all(isinstance(m, str) for m in models):
@@ -98,6 +121,9 @@ def load_config(path: str | Path) -> AppConfig:
         models=tuple(models),
         device_map=str(transformers_table.get("device_map", "auto")),
         dtype=str(transformers_table.get("dtype", "auto")),
+        quantization=quantization,
+        attn_implementation=str(transformers_table.get("attn_implementation", "auto")),
+        max_cached_models=max_cached_models,
         max_new_tokens=max_new_tokens,
         enable_thinking=enable_thinking,
         trust_remote_code=trust_remote_code,

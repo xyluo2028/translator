@@ -20,8 +20,14 @@ model = "tencent/HY-MT1.5-7B"
 dictionary_model = "google/gemma-4-E4B-it"
 # Extra models listed in the web UI. TranslateGemma is gated: accept its license on huggingface.co, then `hf auth login`.
 models = ["tencent/HY-MT1.5-1.8B", "google/translategemma-4b-it"]
-device_map = "auto"
-dtype = "auto"
+# RTX 4080 (16 GB): quantize weights and keep the complete model on CUDA.
+# Use device_map/dtype = "auto" and quantization = "none" on non-CUDA machines.
+device_map = "cuda"
+dtype = "bfloat16"
+quantization = "4bit"
+attn_implementation = "sdpa"
+# Switching models reloads weights, but avoids retaining the 7B translator alongside Gemma.
+max_cached_models = 1
 max_new_tokens = 512
 enable_thinking = false
 trust_remote_code = false

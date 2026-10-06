@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from threading import Lock
+from threading import Lock, RLock
 from typing import Any
 
 from translator_app.config import TransformersConfig
@@ -28,12 +28,10 @@ class _LoadedModel:
     model: Any
 
 
-# Keep at most two models resident (typically a translation model + the dictionary model).
-_MAX_CACHED_MODELS = 2
-_MODEL_CACHE: dict[tuple[str, str, str, bool], _LoadedModel] = {}
+_MODEL_CACHE: dict[tuple[str, str, str, bool, str, str], _LoadedModel] = {}
 _MODEL_CACHE_LOCK = Lock()
-# One generate() at a time: the web UI serves requests from threads and models are shared.
-_GENERATE_LOCK = Lock()
+# Serialize loading through generation so eviction cannot leave an active model in VRAM.
+_GENERATE_LOCK = RLock()
 
 
 def _load_dependencies() -> tuple[Any, Any, Any]:
@@ -71,6 +69,12 @@ def _describe_load_error(model: str, exc: Exception) -> str:
         message += (
             f"\nThis model is gated: accept its license at https://huggingface.co/{model}"
             " and log in with `hf auth login`."
+        )
+    if "out of memory" in text:
+        message += (
+            '\nFor GPU-only inference, set quantization = "4bit", dtype = "bfloat16",'
+            " and max_cached_models = 1 in [transformers]. Close other GPU model processes"
+            " or choose a smaller model if VRAM is still insufficient."
         )
     return message
 
@@ -114,16 +118,21 @@ def _release_accelerator_memory() -> None:
 
 
 def _load_model(config: TransformersConfig) -> _LoadedModel:
-    cache_key = (config.model, config.device_map, config.dtype, config.trust_remote_code)
+    cache_key = (
+        config.model, config.device_map, config.dtype, config.trust_remote_code,
+        config.quantization, config.attn_implementation,
+    )
     with _MODEL_CACHE_LOCK:
         cached = _MODEL_CACHE.pop(cache_key, None)
+        evicted = False
+        while len(_MODEL_CACHE) >= config.max_cached_models:
+            _MODEL_CACHE.pop(next(iter(_MODEL_CACHE)))
+            evicted = True
+        if evicted:
+            _release_accelerator_memory()
         if cached is not None:
             _MODEL_CACHE[cache_key] = cached  # move to most-recently-used
             return cached
-        if len(_MODEL_CACHE) >= _MAX_CACHED_MODELS:
-            while len(_MODEL_CACHE) >= _MAX_CACHED_MODELS:
-                _MODEL_CACHE.pop(next(iter(_MODEL_CACHE)))
-            _release_accelerator_memory()
         loaded = _load_model_uncached(config)
         _MODEL_CACHE[cache_key] = loaded
         return loaded
@@ -131,11 +140,24 @@ def _load_model(config: TransformersConfig) -> _LoadedModel:
 
 def _load_model_uncached(config: TransformersConfig) -> _LoadedModel:
     AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor = _load_dependencies()
-    model_kwargs = {
+    gpu_only = config.device_map == "cuda" or config.device_map.startswith("cuda:")
+    if gpu_only:
+        import torch
+
+        if not torch.cuda.is_available():
+            raise TransformersError(
+                "GPU-only inference requires CUDA, but PyTorch cannot access an NVIDIA GPU. "
+                "Check the driver and CUDA-enabled PyTorch installation."
+            )
+    model_kwargs: dict[str, Any] = {
         "device_map": config.device_map,
         "trust_remote_code": config.trust_remote_code,
         "dtype": _resolve_torch_dtype(config.dtype),
     }
+    if config.attn_implementation != "auto":
+        model_kwargs["attn_implementation"] = config.attn_implementation
+    if config.quantization != "none":
+        model_kwargs["quantization_config"] = _quantization_config(config)
 
     try:
         processor = AutoProcessor.from_pretrained(config.model, trust_remote_code=config.trust_remote_code)
@@ -145,14 +167,48 @@ def _load_model_uncached(config: TransformersConfig) -> _LoadedModel:
     if tokenizer is not None and hasattr(tokenizer, "padding_side"):
         tokenizer.padding_side = "left"
     try:
-        model = AutoModelForImageTextToText.from_pretrained(config.model, **model_kwargs)
-    except Exception:
         try:
+            model = AutoModelForImageTextToText.from_pretrained(config.model, **model_kwargs)
+        except ValueError as exc:
+            # Only retry for text-only architectures; an OOM or broken kernel must surface directly.
+            if "Unrecognized configuration class" not in str(exc):
+                raise
             model = AutoModelForCausalLM.from_pretrained(config.model, **model_kwargs)
-        except Exception as exc:  # noqa: BLE001
-            raise TransformersError(_describe_load_error(config.model, exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise TransformersError(_describe_load_error(config.model, exc)) from exc
+
+    if gpu_only:
+        devices = {parameter.device.type for parameter in model.parameters()}
+        if devices != {"cuda"}:
+            raise TransformersError(f"GPU-only loading failed: model parameters are on {sorted(devices)}.")
 
     return _LoadedModel(processor=processor, model=model)
+
+
+def _quantization_config(config: TransformersConfig) -> Any:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        version("bitsandbytes")
+    except PackageNotFoundError as exc:
+        raise TransformersError(
+            "Quantized Transformers loading requires bitsandbytes. "
+            "Install it with: pip install -e '.[transformers,cuda]'"
+        ) from exc
+    import torch
+    from transformers import BitsAndBytesConfig
+
+    if config.quantization == "8bit":
+        return BitsAndBytesConfig(load_in_8bit=True)
+    compute_dtype = _resolve_torch_dtype(config.dtype)
+    if compute_dtype == "auto":
+        compute_dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
+    return BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_compute_dtype=compute_dtype,
+    )
 
 
 def _build_inputs(processor: Any, *, system: str, user: str, enable_thinking: bool) -> Any:
@@ -232,11 +288,12 @@ def chat_json(
     seed: int | None = None,
 ) -> TransformersResponse:
     start = time.time()
-    loaded = _load_model(config)
-    inputs = _build_inputs(loaded.processor, system=system, user=user, enable_thinking=config.enable_thinking).to(
-        loaded.model.device
-    )
-    content = _generate(loaded, inputs, config=config, sampling={"temperature": temperature}, seed=seed)
+    with _GENERATE_LOCK:
+        loaded = _load_model(config)
+        inputs = _build_inputs(loaded.processor, system=system, user=user, enable_thinking=config.enable_thinking).to(
+            loaded.model.device
+        )
+        content = _generate(loaded, inputs, config=config, sampling={"temperature": temperature}, seed=seed)
     latency_ms = int((time.time() - start) * 1000)
     return TransformersResponse(content=content, model=config.model, latency_ms=latency_ms, raw=content)
 
@@ -251,13 +308,14 @@ def chat_messages(
 ) -> TransformersResponse:
     """Generate from explicit chat messages (used for translation-only models and their own templates)."""
     start = time.time()
-    loaded = _load_model(config)
-    try:
-        inputs = _build_message_inputs(loaded.processor, messages, add_generation_prompt=add_generation_prompt)
-    except Exception as exc:  # noqa: BLE001
-        raise TransformersError(f"Chat template failed for model {config.model!r}: {exc}") from exc
-    inputs = inputs.to(loaded.model.device)
-    content = _generate(loaded, inputs, config=config, sampling=sampling or {}, seed=seed)
+    with _GENERATE_LOCK:
+        loaded = _load_model(config)
+        try:
+            inputs = _build_message_inputs(loaded.processor, messages, add_generation_prompt=add_generation_prompt)
+        except Exception as exc:  # noqa: BLE001
+            raise TransformersError(f"Chat template failed for model {config.model!r}: {exc}") from exc
+        inputs = inputs.to(loaded.model.device)
+        content = _generate(loaded, inputs, config=config, sampling=sampling or {}, seed=seed)
     latency_ms = int((time.time() - start) * 1000)
     return TransformersResponse(content=content, model=config.model, latency_ms=latency_ms, raw=content)
 

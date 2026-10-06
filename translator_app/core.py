@@ -46,6 +46,7 @@ def _response_schema_for(request: TranslateRequest) -> dict[str, Any]:
                 "term": {"type": "string"},
                 "entries": {
                     "type": "array",
+                    "maxItems": 2,
                     "items": {
                         "type": "object",
                         "additionalProperties": False,
@@ -54,6 +55,7 @@ def _response_schema_for(request: TranslateRequest) -> dict[str, Any]:
                             "pos": {"type": ["string", "null"]},
                             "senses": {
                                 "type": "array",
+                                "maxItems": 3,
                                 "items": {
                                     "type": "object",
                                     "additionalProperties": False,
@@ -328,17 +330,20 @@ def _translate_with_ollama(
         temperature = request.temperature if attempt == 1 else 0.0
         try:
             try:
-                resp = chat_json(
-                    host=config.ollama.host,
-                    model=model,
-                    system=system,
-                    user=user,
-                    response_format=response_schema,
-                    temperature=temperature,
-                    seed=request.seed,
+                generation_options = dict(
+                    host=config.ollama.host, model=model,
+                    response_format=response_schema if config.ollama.structured_output else "json",
+                    temperature=temperature, seed=request.seed,
+                    options=config.ollama.options, enable_thinking=config.ollama.enable_thinking,
                 )
+                if config.ollama.api == "generate":
+                    resp = generate_json(prompt=system + "\n\n" + user, **generation_options)
+                else:
+                    resp = chat_json(system=system, user=user, **generation_options)
                 content = resp.content
             except OllamaError:
+                if not config.ollama.structured_output:
+                    raise
                 resp = chat_json(
                     host=config.ollama.host,
                     model=model,
@@ -347,6 +352,8 @@ def _translate_with_ollama(
                     response_format="json",
                     temperature=temperature,
                     seed=request.seed,
+                    options=config.ollama.options,
+                    enable_thinking=config.ollama.enable_thinking,
                 )
                 content = resp.content
 
@@ -364,6 +371,8 @@ def _translate_with_ollama(
                     response_format="json",
                     temperature=0.0,
                     seed=request.seed,
+                    options=config.ollama.options,
+                    enable_thinking=config.ollama.enable_thinking,
                 )
                 content = resp.content
                 try:

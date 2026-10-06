@@ -76,11 +76,13 @@ def chat_json(
     response_format: ResponseFormat = "json",
     temperature: float = 0.2,
     seed: int | None = None,
+    options: dict[str, Any] | None = None,
+    enable_thinking: bool | None = None,
     timeout_s: float = 120.0,
 ) -> OllamaResponse:
     start = time.time()
     url = urljoin(host.rstrip("/") + "/", "api/chat")
-    options: dict[str, Any] = {"temperature": temperature}
+    options = {**(options or {}), "temperature": temperature}
     if seed is not None:
         options["seed"] = seed
 
@@ -94,6 +96,8 @@ def chat_json(
         "format": response_format,
         "options": options,
     }
+    if enable_thinking is not None:
+        payload["think"] = enable_thinking
     status, raw = _http_post_json(url, payload, timeout_s=timeout_s)
     try:
         obj = json.loads(raw)
@@ -114,11 +118,13 @@ def generate_json(
     response_format: ResponseFormat = "json",
     temperature: float = 0.2,
     seed: int | None = None,
+    options: dict[str, Any] | None = None,
+    enable_thinking: bool | None = None,
     timeout_s: float = 120.0,
 ) -> OllamaResponse:
     start = time.time()
     url = urljoin(host.rstrip("/") + "/", "api/generate")
-    options: dict[str, Any] = {"temperature": temperature}
+    options = {**(options or {}), "temperature": temperature}
     if seed is not None:
         options["seed"] = seed
 
@@ -129,6 +135,8 @@ def generate_json(
         "format": response_format,
         "options": options,
     }
+    if enable_thinking is not None:
+        payload["think"] = enable_thinking
     status, raw = _http_post_json(url, payload, timeout_s=timeout_s)
     try:
         obj = json.loads(raw)

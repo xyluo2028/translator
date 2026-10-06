@@ -82,6 +82,10 @@ python3 --version   # must be 3.13 or newer
    https://pytorch.org/get-started/locally/ gives you (pick Pip + your CUDA version; it installs `torch` and
    `torchvision`), then run the `pip install -e` line above. On Apple Silicon the default install already uses
    the GPU (MPS).
+
+   The checked-in `config.toml` targets a 16 GB NVIDIA GPU with 4-bit quantization. Install its additional
+   dependency with `.venv/bin/pip install -e '.[transformers,cuda]'`. On Apple Silicon or CPU, set
+   `device_map = "auto"`, `dtype = "auto"`, `quantization = "none"`, and `attn_implementation = "auto"`.
 2. Download model weights (stored in `~/.cache/huggingface`; set `HF_HOME` to move it):
 
    ```bash
@@ -233,6 +237,9 @@ dictionary_model = "google/gemma-4-E4B-it"        # general model for dictionary
 models = ["tencent/HY-MT1.5-1.8B", "google/translategemma-4b-it"]   # extra models shown in the web UI
 device_map = "auto"             # "auto", "mps", "cuda", or "cpu"
 dtype = "auto"                  # "auto", "bfloat16", "float16", "float32"
+quantization = "none"           # "none", "4bit", "8bit"; quantized loading needs the cuda extra
+attn_implementation = "auto"    # "auto" or e.g. "sdpa" (PyTorch's optimized attention)
+max_cached_models = 2           # resident model limit; use 1 when VRAM is tight
 max_new_tokens = 512
 enable_thinking = false
 trust_remote_code = false
@@ -245,6 +252,92 @@ explain_lang = "EN"             # language for notes and explanations
 temperature = 0.2
 ```
 
+### RTX 4080 / 16 GB GPU
+
+For the GPU-focused Gemma runtime, use [`config.gpu.toml`](config.gpu.toml). This runs Google's official
+E4B QAT Q4_0 GGUF through a project-local Ollama server on port 11435. It keeps the same web UI and downloads
+the model from Hugging Face. The profile requests all model layers on GPU, a 2048-token context, one resident
+model, Flash Attention, and disabled thinking.
+
+The profile uses Ollama's generate endpoint with compact JSON. With this QAT GGUF, chat requests reached
+the 512-token limit before completing their JSON and triggered an extra repair request. The generate path
+completed the tested dictionary responses in one request. `ollama.api`, `structured_output`,
+`enable_thinking`, and `[ollama.options]` control these settings; other configurations keep the chat/schema defaults.
+
+The portable Ollama binary and model cache live under `.local/` (ignored by Git). With the runtime installed:
+
+```bash
+# Terminal 1 (leave running):
+bash scripts/serve-gpu.sh
+
+# Terminal 2 (pull only once, then launch the UI):
+OLLAMA_HOST=127.0.0.1:11435 .local/ollama/bin/ollama pull hf.co/google/gemma-4-E4B-it-qat-q4_0-gguf:latest
+.venv/bin/python webui.py --config config.gpu.toml --open
+```
+
+To install the portable runtime on a fresh Linux x86-64 checkout, download `ollama-linux-amd64.tar.zst` from
+[the official releases](https://github.com/ollama/ollama/releases) and extract its `bin/` and `lib/` directories
+into `.local/ollama/`. This workspace has Ollama v0.35.1 installed there. The system Ollama at port 11434
+uses its own model cache. The QAT download is about 6.2 GB including the multimodal projector.
+
+To use an updated system Ollama instead, [`config.gpu.system.toml`](config.gpu.system.toml) has the same
+model settings and connects to port 11434. Pull the QAT model into that service's cache unless it was
+already imported, then launch the UI with this profile:
+
+```bash
+OLLAMA_HOST=127.0.0.1:11434 ollama pull hf.co/google/gemma-4-E4B-it-qat-q4_0-gguf:latest
+.venv/bin/python webui.py --config config.gpu.system.toml --port 8767 --open
+```
+
+Check placement while the model is loaded:
+
+```bash
+OLLAMA_HOST=127.0.0.1:11435 .local/ollama/bin/ollama ps
+```
+
+The processor column should report `100% GPU`. CPU still handles tokenization, JSON parsing, and web requests.
+The first lookup loads weights; later lookups reuse the model until Ollama unloads it after inactivity.
+Long texts that exceed the 2048-token context require increasing `ollama.options.num_ctx` and more VRAM.
+
+For the direct Transformers backend, `config.toml` also supports GPU-only quantized loading:
+
+The measured E4B bitsandbytes path used 8.6 GiB and placed every parameter and buffer on CUDA, but generated
+about 14 tokens/second on this machine. The QAT runtime generated about 130 tokens/second. See
+[the RTX 4080 benchmark](benchmarks/rtx4080_gemma4.md) for request timings and limits.
+
+Gemma 4 E4B has about 8 billion total parameters including embeddings. Its name describes effective
+parameters, so the full 16-bit model needs more memory than an ordinary 4B model. Google's
+[memory estimates](https://ai.google.dev/gemma/docs/core) put E4B at about 17.9 GB in BF16, including overhead.
+With `device_map = "auto"`, Transformers can place layers on CPU when GPU memory runs out; this adds
+transfer overhead and makes repeated requests slow.
+
+The checked-in configuration uses the existing Hugging Face weights with bitsandbytes NF4 quantization:
+
+```toml
+[transformers]
+device_map = "cuda"
+dtype = "bfloat16"
+quantization = "4bit"
+attn_implementation = "sdpa"
+max_cached_models = 1
+enable_thinking = false
+```
+
+`device_map = "cuda"` places the entire model on the GPU and reports an error if it cannot fit. CPU still
+handles tokenization and request processing. Quantization compresses linear-layer weights; embeddings
+remain in the configured floating-point dtype, so actual memory use differs from a fully quantized GGUF.
+Quantization can change output quality. These settings apply to both the translator and dictionary model.
+
+Restart the web UI after changing configuration. Repeated requests for the same model reuse its weights;
+switching between the translator and dictionary model reloads weights with `max_cached_models = 1`.
+Use 2 only if both quantized models plus generation memory fit in your free VRAM. Each new CLI invocation
+loads weights again, so use the running web UI to measure response time after loading.
+
+Google also publishes an official
+[E4B QAT 4-bit GGUF](https://huggingface.co/google/gemma-4-E4B-it-qat-q4_0-gguf) for llama.cpp-compatible runtimes.
+GGUF weights require a different inference runtime; they cannot be substituted directly into this
+Transformers backend. The in-place bitsandbytes configuration avoids another model download.
+
 ## Troubleshooting
 
 | Message | Fix |
@@ -256,6 +349,9 @@ temperature = 0.2
 | Hugging Face models show `(not downloaded)` | `.venv/bin/hf download <repo id>`. |
 | `This model is gated: accept its license …` | Accept the license on the model's Hugging Face page, then `.venv/bin/hf auth login`. |
 | `requires the PIL library` or `No module named 'torchvision'` | Your venv predates these dependencies: `.venv/bin/pip install -e '.[transformers]'`. |
+| `Quantized Transformers loading requires bitsandbytes` | Install `.venv/bin/pip install -e '.[transformers,cuda]'`, then restart the web UI. |
+| `GPU-only inference requires CUDA` | Check `.venv/bin/python -c 'import torch; print(torch.cuda.is_available())'`; install a CUDA-enabled PyTorch build and check the NVIDIA driver. Use `device_map = "auto"` for other hardware. |
+| `CUDA out of memory` | Use 4-bit quantization and `max_cached_models = 1`, close other processes holding GPU models, or choose a smaller model. |
 | `Some parameters are on the meta device because they were offloaded to the disk` | Not enough free memory for the Hugging Face model, so it runs very slowly. Close other models (e.g. a running web UI, Ollama models via `ollama stop <model>`) or use `tencent/HY-MT1.5-1.8B`. |
 | `--furigana needs the text extra` / 振り仮名 toggle greyed out / no "Did you mean" | Install or update [step 4](#4-spelling-correction-and-japanese-readings-optional-recommended) and run with `.venv/bin/python`. Ambiguous short text may need an explicit source language for spelling correction. Restart the server after upgrading. |
 | A correct word was "corrected" (names, jargon) | Click *Translate "…" instead* in the web UI, or pass `--no-spellcheck`. Capitalized names mid-sentence are already left alone. |

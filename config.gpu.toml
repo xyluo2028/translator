@@ -1,0 +1,38 @@
+# GPU-focused Gemma 4 QAT profile. Start scripts/serve-gpu.sh first.
+[provider]
+name = "ollama"
+
+[ollama]
+host = "http://127.0.0.1:11435"
+model = "hf.co/google/gemma-4-E4B-it-qat-q4_0-gguf:latest"
+dictionary_model = "hf.co/google/gemma-4-E4B-it-qat-q4_0-gguf:latest"
+enable_thinking = false
+# Schema-constrained formatting can exhaust the token budget; JSON mode produces compact entries.
+structured_output = false
+# The QAT GGUF completes dictionary JSON reliably through the generate endpoint.
+api = "generate"
+
+[ollama.options]
+num_ctx = 2048
+num_gpu = 999
+num_predict = 512
+
+[transformers]
+model = "tencent/HY-MT1.5-7B"
+dictionary_model = "google/gemma-4-E4B-it"
+models = ["tencent/HY-MT1.5-1.8B", "google/translategemma-4b-it"]
+device_map = "cuda"
+dtype = "bfloat16"
+quantization = "4bit"
+attn_implementation = "sdpa"
+max_cached_models = 1
+max_new_tokens = 512
+enable_thinking = false
+trust_remote_code = false
+
+[defaults]
+source_lang = "auto"
+target_lang = "ZH"
+tone = "neutral"
+explain_lang = "EN"
+temperature = 0.2

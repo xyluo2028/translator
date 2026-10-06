@@ -14,7 +14,7 @@ def build_system_prompt(request: TranslateRequest) -> str:
         "You are a high-precision translation engine.\n"
         "- Preserve meaning, numbers, and proper nouns.\n"
         "- Preserve line breaks and punctuation when reasonable.\n"
-        "- Output JSON only (no code fences, no extra text).\n"
+        "- Output compact JSON on one line (no indentation, code fences, or extra text).\n"
         "- Always include all required keys; use null when unknown.\n"
     )
 
