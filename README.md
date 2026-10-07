@@ -6,6 +6,7 @@ A portable, local-first translator: runs entirely on your own machine with open 
 - Translate between English, Chinese, Japanese, Korean and a dozen other languages, with auto-detect.
 - Dedicated translation models: **Hunyuan MT 1.5** (Tencent) and **TranslateGemma** (Google).
 - Dictionary mode (parts of speech, senses, examples), tone presets, retry / more literal / more natural.
+- Prompt enhancement: rewrite drafts into clear, concise instructions for AI chatbots and agents.
 - Spelling correction ("Did you mean: **middle**?") and Japanese readings in 漢字（かんじ） form.
 - No cloud APIs, no accounts, nothing leaves your machine.
 
@@ -141,6 +142,11 @@ This opens http://127.0.0.1:8765. Stop it with Ctrl+C.
   `config.toml`, grouped by backend. Models that aren't downloaded yet are shown but disabled.
 - Choose source (or *Detect language*) and target languages; ⇄ swaps them and moves the result into the input.
 - **Translate** / **Dictionary** switch modes. Press ⌘+Enter (macOS) or Ctrl+Enter to run.
+- **Enhance prompt** improves grammar, wording, and structure while preserving your intent and the draft's
+  language. Paste the prompt you plan to send to an AI, then click **Enhance**. The result is ready to copy;
+  **Copy** includes just the enhanced prompt. Essential ambiguities appear separately under **Details to clarify**.
+  The model edits the request rather than carrying it out. Language, tone, and furigana controls are hidden
+  in this mode. **Retry** generates another rewrite, and history saves both your draft and the result.
 - **Retry** samples a new translation. **Tone**, **More literal** and **More natural** need a general model
   (e.g. `gpt-oss`, Gemma 4) and are greyed out for translation-only models. **Dictionary** always uses a
   neutral tone; the tone selector is disabled, and your translation tone choice is restored when supported.
@@ -168,6 +174,7 @@ python3 translate.py "Hello" --from EN --to KO --json --pretty         # structu
 echo "Bonjour tout le monde" | python3 translate.py --to EN             # read from stdin
 .venv/bin/python translate.py "Where is teh station?" --to JA --furigana # auto-detection, spelling fix + readings
 .venv/bin/python translate.py "hello" --to JA --provider transformers --model tencent/HY-MT1.5-1.8B
+.venv/bin/python translate.py "fix teh parser, keep the API unchanged and add tests" --mode enhance --config config.gpu.system.toml
 ```
 
 | Option | Meaning |
@@ -175,7 +182,7 @@ echo "Bonjour tout le monde" | python3 translate.py --to EN             # read f
 | `--to CODE` / `--from CODE` | Target / source language (`EN`, `ZH`, `ZH-TW`, `JA`, `KO`, `FR`, `DE`, `ES`, …; source defaults to `auto`) |
 | `--provider ollama\|transformers` | Backend (default: `[provider].name` in `config.toml`) |
 | `--model NAME` | Model for this run (Ollama tag or Hugging Face repo id) |
-| `--mode translate\|dictionary` | Translation or dictionary lookup |
+| `--mode translate\|dictionary\|enhance` | Translation, dictionary lookup, or prompt enhancement |
 | `--tone NAME`, `--tone-instructions TEXT` | Translation style presets (`casual`, `formal`, `polite`, `spoken`, `business`); general models only, ignored in dictionary mode |
 | `--rerun retry\|more_literal\|more_natural` | Regenerate; translation-only models support `retry` only |
 | `--no-spellcheck` | Translate exactly what you typed (spelling correction is on by default when installed, using the selected or confidently detected source language) |
@@ -211,6 +218,8 @@ How the app treats them:
   every feature. Any Ollama chat model you pull shows up in the web UI automatically.
 - **Dictionary mode** always runs on a general model. If a translation-only model is selected, the app uses
   `dictionary_model` from `config.toml` for that backend.
+- **Prompt enhancement** also uses a general model and the same fallback. It preserves the original draft
+  before inference, including code and identifiers; translation spelling correction is bypassed.
 - **Auto-detect** with the `text` extra first identifies the source among the app's translation and spelling
   languages, then passes that language to spelling correction and translation. Uncertain detection limits
   spelling to one-letter English fixes for words no other dictionary knows. Without the extra, or when
@@ -250,7 +259,16 @@ target_lang = "ZH"
 tone = "neutral"
 explain_lang = "EN"             # language for notes and explanations
 temperature = 0.2
+
+[enhancement]
+num_ctx = 8192                 # Ollama context for draft prompts
+max_new_tokens = 2048          # output budget on either backend
 ```
+
+Prompt enhancement has a separate context/output budget so longer drafts are not limited by short
+dictionary-response settings. Increase these values for longer drafts; a larger context consumes more
+GPU memory. Switching Ollama context sizes can reload the model. LLM rewrites can still alter nuances,
+so review the enhanced prompt before using it.
 
 ### RTX 4080 / 16 GB GPU
 
@@ -288,6 +306,19 @@ already imported, then launch the UI with this profile:
 OLLAMA_HOST=127.0.0.1:11434 ollama pull hf.co/google/gemma-4-E4B-it-qat-q4_0-gguf:latest
 .venv/bin/python webui.py --config config.gpu.system.toml --port 8767 --open
 ```
+
+The current workspace runs the optimized UI on port 8766 as the temporary user service
+`translator-webui-gpu`, and the original profile on port 8765 as `translator-webui-default`.
+After changing Python code or configuration, reload them with:
+
+```bash
+systemctl --user restart translator-webui-gpu
+systemctl --user restart translator-webui-default
+```
+
+These user services keep running independently of the chat session and are not configured to start
+automatically after a reboot. Use the foreground commands above to launch the UI again, or stop either
+service with `systemctl --user stop <service-name>`.
 
 Check placement while the model is loaded:
 

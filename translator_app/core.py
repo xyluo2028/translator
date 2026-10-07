@@ -12,6 +12,7 @@ from translator_app.models import (
     DictionaryEntry,
     DictionaryResult,
     DictionarySense,
+    PromptEnhanceResult,
     TranslateRequest,
     TranslateResult,
 )
@@ -34,9 +35,21 @@ class ProviderResponseParseError(RuntimeError):
 
 
 T = TypeVar("T")
+Result = TranslateResult | DictionaryResult | PromptEnhanceResult
 
 
 def _response_schema_for(request: TranslateRequest) -> dict[str, Any]:
+    if request.mode == "enhance":
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["clarifications", "enhanced_prompt"],
+            "properties": {
+                "clarifications": {"type": "array", "maxItems": 3, "items": {"type": "string"}},
+                "enhanced_prompt": {"type": "string", "minLength": 1},
+            },
+        }
+
     if request.mode == "dictionary":
         return {
             "type": "object",
@@ -198,24 +211,50 @@ def _as_dictionary_result(
     return DictionaryResult(term=term, entries=entries, provider=provider, model=model, latency_ms=latency_ms)
 
 
+def _as_prompt_enhance_result(
+    obj: dict[str, Any], *, provider: str, model: str | None, latency_ms: int | None,
+) -> PromptEnhanceResult:
+    prompt = obj.get("enhanced_prompt")
+    questions = obj.get("clarifications", [])
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ProviderResponseParseError("Missing 'enhanced_prompt' in model output.", raw_response=json.dumps(obj))
+    if not isinstance(questions, list) or any(not isinstance(question, str) for question in questions):
+        raise ProviderResponseParseError("Expected 'clarifications' to be a list of strings.", raw_response=json.dumps(obj))
+    return PromptEnhanceResult(
+        enhanced_prompt=prompt.strip(),
+        clarifications=[question.strip() for question in questions if question.strip()][:3],
+        provider=provider, model=model, latency_ms=latency_ms,
+    )
+
+
 def resolve_model(request: TranslateRequest, config: AppConfig) -> tuple[str, PromptStyle]:
-    """Pick the model for a request on the active provider. Translation-only models can't do dictionary mode."""
+    """Use a general model for dictionary entries and prompt enhancement."""
     if config.provider.name == "transformers":
         model, dictionary_model = request.model or config.transformers.model, config.transformers.dictionary_model
     else:
         model, dictionary_model = request.model or config.ollama.model, config.ollama.dictionary_model
     style = prompt_style_for(model)
-    if style != "json" and request.mode == "dictionary":
+    if style != "json" and request.mode in ("dictionary", "enhance"):
         model = dictionary_model
         style = prompt_style_for(model)
-    if style != "json" and request.mode == "dictionary":
-        raise ValueError(f"Dictionary mode needs a general chat model; {model!r} is translation-only.")
+    if style != "json" and request.mode in ("dictionary", "enhance"):
+        task = "Prompt enhancement" if request.mode == "enhance" else "Dictionary mode"
+        raise ValueError(f"{task} needs a general chat model; {model!r} is translation-only.")
     return model, style
 
 
-def translate_text(request: TranslateRequest, *, config: AppConfig) -> TranslateResult | DictionaryResult:
+def translate_text(request: TranslateRequest, *, config: AppConfig) -> Result:
     if config.provider.name not in ("ollama", "transformers"):
         raise ValueError(f"Unsupported provider: {config.provider.name!r}")
+    if request.mode not in ("translate", "dictionary", "enhance"):
+        raise ValueError(f"Unsupported mode: {request.mode!r}")
+    if request.mode == "enhance":
+        if not request.text.strip():
+            raise ValueError("Enter a prompt to enhance.")
+        if request.rerun and request.rerun.style != "retry":
+            raise ValueError("Prompt enhancement supports Retry only.")
+        # Preserve code, paths, and identifiers; the model handles prose corrections.
+        return _translate(request, config=config)
 
     detected = spelling.detect_source_language(request.text) if request.source_lang.lower() == "auto" else None
     prepared = replace(request, source_lang=detected) if detected else request
@@ -229,11 +268,22 @@ def translate_text(request: TranslateRequest, *, config: AppConfig) -> Translate
     return replace(result, spelling=fix) if fix else result
 
 
-def _translate(request: TranslateRequest, *, config: AppConfig) -> TranslateResult | DictionaryResult:
+def _translate(request: TranslateRequest, *, config: AppConfig) -> Result:
 
     model, style = resolve_model(request, config)
     if style != "json":
         return _translate_plain(request, config=config, model=model, style=style)
+
+    if request.mode == "enhance":
+        config = replace(
+            config,
+            ollama=replace(config.ollama, options={
+                **config.ollama.options,
+                "num_ctx": config.enhancement.num_ctx,
+                "num_predict": config.enhancement.max_new_tokens,
+            }),
+            transformers=replace(config.transformers, max_new_tokens=config.enhancement.max_new_tokens),
+        )
 
     system = build_system_prompt(request)
     user = build_user_prompt(request)
@@ -320,7 +370,7 @@ def _translate_with_ollama(
     system: str,
     user: str,
     response_schema: dict[str, Any],
-) -> TranslateResult | DictionaryResult:
+) -> Result:
 
     resp = None
     content = ""
@@ -392,6 +442,8 @@ def _translate_with_ollama(
         return _as_dictionary_result(request, obj, provider="ollama", model=resp.model, latency_ms=resp.latency_ms)
 
     assert resp is not None
+    if request.mode == "enhance":
+        return _as_prompt_enhance_result(obj, provider="ollama", model=resp.model, latency_ms=resp.latency_ms)
     return _as_translate_result(obj, provider="ollama", model=resp.model, latency_ms=resp.latency_ms)
 
 
@@ -401,7 +453,7 @@ def _translate_with_transformers(
     config: AppConfig,
     system: str,
     user: str,
-) -> TranslateResult | DictionaryResult:
+) -> Result:
     resp = None
     content = ""
     last_parse_error: ProviderResponseParseError | None = None
@@ -445,4 +497,6 @@ def _translate_with_transformers(
             model=resp.model,
             latency_ms=resp.latency_ms,
         )
+    if request.mode == "enhance":
+        return _as_prompt_enhance_result(obj, provider="transformers", model=resp.model, latency_ms=resp.latency_ms)
     return _as_translate_result(obj, provider="transformers", model=resp.model, latency_ms=resp.latency_ms)

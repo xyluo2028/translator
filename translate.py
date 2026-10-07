@@ -24,12 +24,12 @@ def _read_text_from_stdin() -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="LLM-backed translator with pluggable model backends.")
-    parser.add_argument("text", nargs="?", help="Text to translate (or omit to read stdin).")
+    parser.add_argument("text", nargs="?", help="Text or draft prompt (or omit to read stdin).")
 
     parser.add_argument("--config", default="config.toml", help="Path to config TOML.")
     parser.add_argument("--provider", choices=("ollama", "transformers"), default=None)
     parser.add_argument("--model", default=None, help="Override the provider's configured model.")
-    parser.add_argument("--mode", choices=("translate", "dictionary"), default=None)
+    parser.add_argument("--mode", choices=("translate", "dictionary", "enhance"), default=None)
     parser.add_argument("--from", dest="source_lang", default=None, help='Source language (or "auto").')
     parser.add_argument("--to", dest="target_lang", default=None, help="Target language.")
 
@@ -90,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
 
     payload = asdict(result)
     source_furigana = None
-    if args.furigana:
+    if args.furigana and request.mode != "enhance":
         if not furigana.available():
             print("error: --furigana needs the text extra: pip install -e '.[text]'", file=sys.stderr)
             return 1
@@ -109,6 +109,14 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         else:
             print(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    if request.mode == "enhance":
+        print(payload["enhanced_prompt"])
+        if payload["clarifications"]:
+            print("\nDetails to clarify:")
+            for question in payload["clarifications"]:
+                print(f"- {question}")
         return 0
 
     fix = payload.get("spelling")

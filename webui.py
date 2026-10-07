@@ -78,15 +78,17 @@ def _model_entry(provider: str, name: str, *, available: bool, reason: str) -> d
 def _request_from_body(body: dict[str, Any], config: AppConfig) -> TranslateRequest:
     text = str(body.get("text") or "")
     if not text.strip():
-        raise ValueError("Enter some text to translate.")
+        raise ValueError("Enter some text or a prompt.")
     if len(text) > MAX_TEXT_CHARS:
         raise ValueError(f"Text is too long ({len(text)} characters, max {MAX_TEXT_CHARS}).")
     mode = body.get("mode") or "translate"
-    if mode not in ("translate", "dictionary"):
+    if mode not in ("translate", "dictionary", "enhance"):
         raise ValueError(f"Unknown mode: {mode!r}")
     rerun = body.get("rerun")
     if rerun not in (None, "", "retry", "more_literal", "more_natural"):
         raise ValueError(f"Unknown rerun style: {rerun!r}")
+    if mode == "enhance" and rerun not in (None, "", "retry"):
+        raise ValueError("Prompt enhancement supports Retry only.")
     return TranslateRequest(
         text=text,
         source_lang=str(body.get("source_lang") or config.defaults.source_lang),
@@ -98,13 +100,13 @@ def _request_from_body(body: dict[str, Any], config: AppConfig) -> TranslateRequ
         rerun=RerunHint(style=rerun) if rerun else None,
         temperature=config.defaults.temperature,
         model=(str(body["model"]) if body.get("model") else None),
-        spellcheck=body.get("spellcheck", True) is not False,
+        spellcheck=mode != "enhance" and body.get("spellcheck", True) is not False,
     )
 
 
 def _with_furigana(payload: dict[str, Any], request: TranslateRequest) -> dict[str, Any]:
     """Attach a furigana-annotated copy (payload["furigana"]) when Japanese is involved, so the UI can toggle it."""
-    if not furigana.available():
+    if request.mode == "enhance" or not furigana.available():
         return payload
     fix = payload.get("spelling")
     annotated = furigana.annotate_result(

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 
-Mode = Literal["translate", "dictionary"]
+Mode = Literal["translate", "dictionary", "enhance"]
 RerunStyle = Literal["retry", "more_literal", "more_natural"]
 
 
@@ -56,6 +56,16 @@ class TranslateResult:
     alternatives: list[str] | None = None
     notes: str | None = None
     detected_source_lang: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    latency_ms: int | None = None
+    spelling: SpellingFix | None = None
+
+
+@dataclass(frozen=True)
+class PromptEnhanceResult:
+    enhanced_prompt: str
+    clarifications: list[str] = field(default_factory=list)
     provider: str | None = None
     model: str | None = None
     latency_ms: int | None = None

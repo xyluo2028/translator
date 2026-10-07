@@ -51,11 +51,18 @@ class DefaultsConfig:
 
 
 @dataclass(frozen=True)
+class EnhancementConfig:
+    num_ctx: int = 8192
+    max_new_tokens: int = 2048
+
+
+@dataclass(frozen=True)
 class AppConfig:
     provider: ProviderConfig = ProviderConfig()
     ollama: OllamaConfig = OllamaConfig()
     transformers: TransformersConfig = TransformersConfig()
     defaults: DefaultsConfig = DefaultsConfig()
+    enhancement: EnhancementConfig = EnhancementConfig()
 
 
 def _get_table(data: dict[str, Any], key: str) -> dict[str, Any]:
@@ -78,6 +85,7 @@ def load_config(path: str | Path) -> AppConfig:
     ollama_table = _get_table(data, "ollama")
     transformers_table = _get_table(data, "transformers")
     defaults_table = _get_table(data, "defaults")
+    enhancement_table = _get_table(data, "enhancement")
 
     provider = ProviderConfig(name=str(provider_table.get("name", "ollama")))
     ollama = OllamaConfig(
@@ -143,4 +151,12 @@ def load_config(path: str | Path) -> AppConfig:
         temperature=temperature_f,
     )
 
-    return AppConfig(provider=provider, ollama=ollama, transformers=transformers, defaults=defaults)
+    enhancement_values = {}
+    for key in ("num_ctx", "max_new_tokens"):
+        value = enhancement_table.get(key, getattr(EnhancementConfig(), key))
+        if type(value) is not int or value < 1:
+            raise ValueError(f'Expected "enhancement.{key}" to be a positive integer')
+        enhancement_values[key] = value
+    enhancement = EnhancementConfig(**enhancement_values)
+
+    return AppConfig(provider=provider, ollama=ollama, transformers=transformers, defaults=defaults, enhancement=enhancement)
