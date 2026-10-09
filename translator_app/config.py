@@ -7,6 +7,19 @@ from typing import Any
 import tomllib
 
 
+PROVIDERS = ("ollama", "transformers", "openai", "gemini")
+
+
+@dataclass(frozen=True)
+class CloudConfig:
+    model: str = "gpt-6-luna"
+    models: tuple[str, ...] = field(default_factory=tuple)
+    api_key_env: str = "OPENAI_API_KEY"
+    max_output_tokens: int = 4096
+    timeout_s: float = 120.0
+    reasoning_effort: str = "none"
+
+
 @dataclass(frozen=True)
 class ProviderConfig:
     name: str = "ollama"
@@ -63,6 +76,10 @@ class AppConfig:
     transformers: TransformersConfig = TransformersConfig()
     defaults: DefaultsConfig = DefaultsConfig()
     enhancement: EnhancementConfig = EnhancementConfig()
+    openai: CloudConfig = CloudConfig()
+    gemini: CloudConfig = CloudConfig(
+        model="gemini-3.1-flash-lite", api_key_env="GEMINI_API_KEY", reasoning_effort="minimal",
+    )
 
 
 def _get_table(data: dict[str, Any], key: str) -> dict[str, Any]:
@@ -72,6 +89,27 @@ def _get_table(data: dict[str, Any], key: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise TypeError(f'Expected "{key}" to be a table in config.toml')
     return value
+
+
+def _cloud_config(data: dict[str, Any], name: str, defaults: CloudConfig) -> CloudConfig:
+    table = _get_table(data, name)
+    values = {key: table.get(key, getattr(defaults, key)) for key in (
+        "model", "api_key_env", "max_output_tokens", "timeout_s", "reasoning_effort",
+    )}
+    for key in ("model", "api_key_env"):
+        if not isinstance(values[key], str) or not values[key].strip():
+            raise ValueError(f'Expected "{name}.{key}" to be a nonempty string')
+    if type(values["max_output_tokens"]) is not int or values["max_output_tokens"] < 1:
+        raise ValueError(f'Expected "{name}.max_output_tokens" to be a positive integer')
+    timeout = values["timeout_s"]
+    if type(timeout) not in (int, float) or not 0 < timeout < float("inf"):
+        raise ValueError(f'Expected "{name}.timeout_s" to be a positive finite number')
+    if values["reasoning_effort"] not in ("", "none", "minimal", "low", "medium", "high", "xhigh", "max"):
+        raise ValueError(f'Invalid "{name}.reasoning_effort"')
+    models = table.get("models", [])
+    if not isinstance(models, list) or any(not isinstance(m, str) or not m.strip() for m in models):
+        raise ValueError(f'Expected "{name}.models" to be a list of nonempty strings')
+    return CloudConfig(**values, models=tuple(models))
 
 
 def load_config(path: str | Path) -> AppConfig:
@@ -159,4 +197,8 @@ def load_config(path: str | Path) -> AppConfig:
         enhancement_values[key] = value
     enhancement = EnhancementConfig(**enhancement_values)
 
-    return AppConfig(provider=provider, ollama=ollama, transformers=transformers, defaults=defaults, enhancement=enhancement)
+    return AppConfig(
+        provider=provider, ollama=ollama, transformers=transformers, defaults=defaults, enhancement=enhancement,
+        openai=_cloud_config(data, "openai", AppConfig.openai),
+        gemini=_cloud_config(data, "gemini", AppConfig.gemini),
+    )

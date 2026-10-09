@@ -14,7 +14,7 @@ from translator_app.config import AppConfig, EnhancementConfig, OllamaConfig, Pr
 from translator_app.hf_transformers import TransformersResponse
 from translator_app.models import PromptEnhanceResult, RerunHint, TranslateRequest
 from translator_app.ollama import OllamaResponse
-from translator_app.prompting import build_system_prompt, build_user_prompt
+from translator_app.prompting import ENHANCEMENT_SCENARIOS, build_system_prompt, build_user_prompt
 
 
 class PromptEnhancementTests(unittest.TestCase):
@@ -94,7 +94,7 @@ class PromptEnhancementTests(unittest.TestCase):
 
     def test_invalid_fallback_model_is_rejected(self):
         config = replace(AppConfig(), ollama=OllamaConfig(model="translategemma:4b", dictionary_model="HY-MT1.5"))
-        with self.assertRaisesRegex(ValueError, "Prompt enhancement needs a general chat model"):
+        with self.assertRaisesRegex(ValueError, "Enhance needs a general chat model"):
             core.translate_text(self.request(), config=config)
 
     def test_invalid_outputs_do_not_silently_become_prompts(self):
@@ -127,12 +127,51 @@ class PromptEnhancementTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Retry only"):
             webui._request_from_body({"text": "draft", "mode": "enhance", "rerun": "more_literal"}, AppConfig())
 
+    def test_scenarios_reach_provider_with_shared_preservation_rules(self):
+        prompts = set()
+        for scenario, (label, guidance) in ENHANCEMENT_SCENARIOS.items():
+            with self.subTest(scenario=scenario), patch.object(core, "chat_json", return_value=self.response()) as chat:
+                request = webui._request_from_body({
+                    "text": "今天的会议很有帮助。", "mode": "enhance", "scenario": scenario,
+                }, AppConfig())
+                core.translate_text(request, config=replace(AppConfig(), ollama=OllamaConfig(model="gemma")))
+            system = chat.call_args.kwargs["system"]
+            self.assertIn(f"Writing scenario: {label}.", system)
+            self.assertIn(guidance, system)
+            self.assertIn("Do not translate the draft", system)
+            self.assertIn("Do not invent facts", system)
+            self.assertIn("do not answer or execute it", system)
+            self.assertIn("今天的会议很有帮助。", chat.call_args.kwargs["user"])
+            prompts.add(system)
+        self.assertEqual(len(prompts), len(ENHANCEMENT_SCENARIOS))
+
+    def test_general_is_default_and_prompt_is_explicit(self):
+        request = self.request(text="the train were late")
+        self.assertEqual(request.scenario, "general")
+        general = build_system_prompt(request)
+        self.assertIn("Do not turn ordinary prose into an AI prompt", general)
+        self.assertNotIn("Edit instructions for AI chatbots", general)
+        self.assertIn("Edit instructions for AI chatbots", build_system_prompt(replace(request, scenario="prompt")))
+
+    def test_invalid_scenario_is_rejected_before_provider_call(self):
+        for scenario in ("unknown", "", None, ["email"]):
+            with self.subTest(scenario=scenario), self.assertRaisesRegex(ValueError, "scenario"):
+                webui._request_from_body({"text": "draft", "mode": "enhance", "scenario": scenario}, AppConfig())
+        with patch.object(core, "_translate") as provider, self.assertRaisesRegex(ValueError, "scenario"):
+            core.translate_text(self.request(scenario="unknown"), config=AppConfig())
+        provider.assert_not_called()
+
+    def test_scenario_does_not_change_translation(self):
+        request = self.request(mode="translate")
+        self.assertEqual(build_system_prompt(request), build_system_prompt(replace(request, scenario="email")))
+
     def test_cli_prints_prompt_and_clarifications_without_translation_labels(self):
         result = PromptEnhanceResult("Fix src/helo.py.", ["Which parser error occurs?"])
         output = io.StringIO()
         with patch.object(translate, "translate_text", return_value=result) as run, contextlib.redirect_stdout(output):
-            self.assertEqual(translate.main(["fix teh parser", "--mode", "enhance"]), 0)
+            self.assertEqual(translate.main(["fix teh parser", "--mode", "enhance", "--scenario", "prompt"]), 0)
         self.assertEqual(run.call_args.args[0].mode, "enhance")
+        self.assertEqual(run.call_args.args[0].scenario, "prompt")
         self.assertEqual(output.getvalue(), "Fix src/helo.py.\n\nDetails to clarify:\n- Which parser error occurs?\n")
 
     def test_enhancement_config_loads_and_rejects_invalid_budgets(self):

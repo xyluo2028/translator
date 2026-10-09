@@ -1,14 +1,17 @@
 # LLM Translator
 
-A portable, local-first translator: runs entirely on your own machine with open models, served through
-**Ollama** or **Hugging Face Transformers**. Use it from a local web UI or the command line.
+A portable, local-first translator with open models served through **Ollama** or
+**Hugging Face Transformers**, plus optional **Google Gemini** and **OpenAI** APIs.
+Use it from a local web UI or the command line.
 
 - Translate between English, Chinese, Japanese, Korean and a dozen other languages, with auto-detect.
 - Dedicated translation models: **Hunyuan MT 1.5** (Tencent) and **TranslateGemma** (Google).
-- Dictionary mode (parts of speech, senses, examples), tone presets, retry / more literal / more natural.
-- Prompt enhancement: rewrite drafts into clear, concise instructions for AI chatbots and agents.
+- Dictionary mode (parts of speech, senses, examples, IPA pronunciation), tone presets, retry / more literal / more natural.
+- Relatives: word-family derivations, synonyms, and antonyms for words and short phrases.
+- Play translated text aloud with browser/device speech voices.
+- Enhance: polish natural-language text for general use, AI prompts, technical documents, work, speech, formal writing, email, or online posts.
 - Spelling correction ("Did you mean: **middle**?") and Japanese readings in 漢字（かんじ） form.
-- No cloud APIs, no accounts, nothing leaves your machine.
+- Local backends need no cloud accounts; cloud backends send input text to the selected provider.
 
 ## Contents
 
@@ -31,8 +34,90 @@ A portable, local-first translator: runs entirely on your own machine with open 
 | Disk | ~26 GB for the three default models | ~36 GB for the three default models |
 | Memory | 8 GB for translation only; 16 GB+ to also run `gpt-oss` for dictionary mode | 16 GB for the 7B translator; 32 GB+ to keep it and Gemma 4 loaded together |
 
-You can set up either backend, or both. The Ollama backend is simpler, faster (4-bit models), and needs no
-Python packages, so start there.
+You can set up either local backend, or both. Cloud-only use needs Python 3.13+, internet access,
+and a provider API key, with no GPU, model downloads, Ollama, or extra Python packages.
+See [Cloud API setup](#cloud-api-setup).
+
+## Cloud API setup
+
+Registration and model details below were checked on **2026-10-09**. Account-specific access and quotas
+can vary. Both cloud providers support translation, dictionary mode, tone, and Enhance.
+
+### Google Gemini free tier
+
+1. Sign in with a Google account at [Google AI Studio](https://aistudio.google.com/).
+   You must be at least 18 and in a [supported region](https://ai.google.dev/gemini-api/docs/available-regions)
+   (Japan is supported).
+2. Accept the terms, then open [API keys](https://aistudio.google.com/api-keys).
+   New users receive a default project/key; otherwise create or import a project and create its API key.
+   Organization-managed projects may require an administrator's permission.
+   See [Google's key setup instructions](https://ai.google.dev/gemini-api/docs/api-key).
+3. Keep the project on the **Free Tier** to try eligible models without enabling paid billing.
+   The default here, `gemini-3.1-flash-lite`, currently has free input/output usage, subject to quotas.
+   Free-tier content may be used to improve Google products, so use local models for private text.
+   Check [pricing and data use](https://ai.google.dev/gemini-api/docs/pricing) and
+   [billing tiers](https://ai.google.dev/gemini-api/docs/billing) before enabling billing.
+4. Check your project's active limits in AI Studio. Limits apply to requests/tokens and vary by model
+   and tier; creating extra keys does not create extra project quota.
+   See [rate limits](https://ai.google.dev/gemini-api/docs/rate-limits).
+
+Enter the key privately in Bash, then test:
+
+```bash
+read -rsp 'Gemini API key: ' GEMINI_API_KEY; echo
+export GEMINI_API_KEY
+python3 translate.py "Hello, how are you?" --provider gemini --to JA
+```
+
+### OpenAI GPT-6 Luna
+
+1. Sign up/sign in at the [OpenAI API platform](https://platform.openai.com/).
+2. Select or create a project, then create a secret key on the
+   [API keys page](https://platform.openai.com/api-keys). Give it permission to create Chat Completions.
+   Store the key privately. See the [API quickstart](https://developers.openai.com/api/docs/quickstart).
+3. Check [API billing](https://platform.openai.com/settings/organization/billing/overview) and add
+   payment/credits as required by your account. Budget for API usage separately from ChatGPT;
+   check project model access and usage limits in the platform before use.
+4. The model ID is **`gpt-6-luna`** (Luna, not “lunna”). Its listed standard text rates are currently
+   **$0.10 / million input tokens** and **$0.50 / million output tokens**; reasoning uses output tokens too.
+   See the [official Luna model page](https://developers.openai.com/api/docs/models/gpt-6-luna).
+
+```bash
+read -rsp 'OpenAI API key: ' OPENAI_API_KEY; echo
+export OPENAI_API_KEY
+python3 translate.py "Hello, how are you?" --provider openai --to JA
+```
+
+Start `python3 webui.py --open` from the same shell and select **Google Gemini · cloud API** or
+**OpenAI · cloud API** in the model picker. The server reads keys; the browser never receives them.
+Restart the server after changing its environment. A model becomes selectable when its key is set;
+this does **not** verify the key, billing, or model access until your first request.
+The app does not load `.env` files automatically. Do not put actual keys in TOML or commit them.
+For the existing systemd user services, exporting in a terminal does not update their environment.
+Configure a private `EnvironmentFile` for the service (outside the repository, readable only by your user),
+then reload systemd and restart the service; alternatively run the foreground command above from the shell
+where you exported the key. Use `.venv/bin/python` on this checkout: its system `python3` is older than 3.13.
+
+In `config.toml`, set `[provider].name` to `"gemini"` or `"openai"` to make it the default.
+The `[gemini]` and `[openai]` sections support:
+
+| Setting | Purpose |
+|---|---|
+| `model` | Default model ID; override for the CLI with `--model` |
+| `models` | Additional model IDs offered in the web picker |
+| `api_key_env` | Environment variable name containing the key |
+| `max_output_tokens` | Completion budget, including reasoning; default 4096 for all three modes |
+| `timeout_s` | Request timeout; default 120 seconds |
+| `reasoning_effort` | Model-dependent setting; `"none"` for Luna, `"minimal"` for Gemini Flash-Lite; `""` omits it |
+
+Cloud requests use each vendor's Chat Completions endpoint with a JSON schema
+([OpenAI reference](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create),
+[Gemini compatibility](https://ai.google.dev/gemini-api/docs/openai)). Model overrides must support structured output
+and the configured reasoning setting. OpenAI sampling temperature is omitted for reasoning-model compatibility;
+Gemini receives the requested temperature. Seed is not sent to either API. Retry creates a new request.
+There are no automatic retries, JSON repair calls, or switches to another provider, so a failure won't
+silently create extra billable calls. HTTP 429 means check quotas/billing and try later; truncated responses
+need a higher output budget or shorter input. Local `[enhancement]` budgets do not override cloud budgets.
 
 ## Setup
 
@@ -141,12 +226,29 @@ This opens http://127.0.0.1:8765. Stop it with Ctrl+C.
 - **Model** picker (top right) lists every Ollama model you have pulled and the Hugging Face models from
   `config.toml`, grouped by backend. Models that aren't downloaded yet are shown but disabled.
 - Choose source (or *Detect language*) and target languages; ⇄ swaps them and moves the result into the input.
-- **Translate** / **Dictionary** switch modes. Press ⌘+Enter (macOS) or Ctrl+Enter to run.
-- **Enhance prompt** improves grammar, wording, and structure while preserving your intent and the draft's
-  language. Paste the prompt you plan to send to an AI, then click **Enhance**. The result is ready to copy;
-  **Copy** includes just the enhanced prompt. Essential ambiguities appear separately under **Details to clarify**.
-  The model edits the request rather than carrying it out. Language, tone, and furigana controls are hidden
-  in this mode. **Retry** generates another rewrite, and history saves both your draft and the result.
+- **Translate**, **Dictionary**, **Relatives**, and **Enhance** switch modes. Press ⌘+Enter (macOS) or Ctrl+Enter to run.
+- **Dictionary** includes IPA pronunciation beneath the term, with UK/US variants for English when they differ.
+  Pronunciation can also identify part-of-speech differences. IPA is supplied by the selected model;
+  uncertain pronunciations are omitted.
+- **Relatives** shows tables for **Derivations**, **Synonyms**, and **Antonyms**, including part of speech
+  and a short meaning. The input language is detected automatically; related words, meanings, and notes
+  stay in that language. From/To selectors are hidden in this mode.
+  Input must be one word or a single-line phrase of up to **5 words / 60 characters**, without sentence
+  punctuation. Long text is rejected before model inference. An unavailable group is shown as empty.
+- **Enhance** improves any natural-language text while preserving its meaning and language. Choose a
+  **Scenario**: **General** (default), **Prompt**, **Tech**, **Career**, **Spoken**, **Formal**, **Email**, or **Vibe**.
+  Each scenario has a short explanation below the controls. Tech is for documents, Career is for work,
+  and Vibe is for Reddit, X, Instagram, and similar online contexts.
+  Paste your text, then click **Enhance**. **Copy** includes only the rewritten text; essential ambiguities
+  appear separately under **Details to clarify**. The model edits the text without answering or executing it.
+  Language, tone, and furigana controls are hidden in this mode. **Retry** keeps the same scenario;
+  history saves the scenario with the text and result. Older prompt-enhancement history restores as **Prompt**.
+- **Play** reads the translation aloud in its target language; **Stop** cancels playback. Changing modes,
+  starting another request, or restoring history stops the previous audio. Playback uses the original text
+  without furigana annotations and keeps the result's target language even if you change the selectors.
+  This uses the [browser Web Speech API](https://developer.mozilla.org/en-US/docs/Web/API/SpeechSynthesis);
+  no additional translator API key or package is required. Voice availability and quality depend on your
+  browser/device, and some voices may use a network service. Missing voices are reported next to Play.
 - **Retry** samples a new translation. **Tone**, **More literal** and **More natural** need a general model
   (e.g. `gpt-oss`, Gemma 4) and are greyed out for translation-only models. **Dictionary** always uses a
   neutral tone; the tone selector is disabled, and your translation tone choice is restored when supported.
@@ -174,15 +276,18 @@ python3 translate.py "Hello" --from EN --to KO --json --pretty         # structu
 echo "Bonjour tout le monde" | python3 translate.py --to EN             # read from stdin
 .venv/bin/python translate.py "Where is teh station?" --to JA --furigana # auto-detection, spelling fix + readings
 .venv/bin/python translate.py "hello" --to JA --provider transformers --model tencent/HY-MT1.5-1.8B
-.venv/bin/python translate.py "fix teh parser, keep the API unchanged and add tests" --mode enhance --config config.gpu.system.toml
+.venv/bin/python translate.py "fix teh parser, keep the API unchanged and add tests" --mode enhance --scenario prompt --config config.gpu.system.toml
+.venv/bin/python translate.py "hi, can you send me the notes when you get a chance" --mode enhance --scenario email --provider gemini
+.venv/bin/python translate.py "create" --mode relatives --provider gemini
 ```
 
 | Option | Meaning |
 |---|---|
 | `--to CODE` / `--from CODE` | Target / source language (`EN`, `ZH`, `ZH-TW`, `JA`, `KO`, `FR`, `DE`, `ES`, …; source defaults to `auto`) |
-| `--provider ollama\|transformers` | Backend (default: `[provider].name` in `config.toml`) |
+| `--provider ollama\|transformers\|gemini\|openai` | Backend (default: `[provider].name` in `config.toml`) |
 | `--model NAME` | Model for this run (Ollama tag or Hugging Face repo id) |
-| `--mode translate\|dictionary\|enhance` | Translation, dictionary lookup, or prompt enhancement |
+| `--mode translate\|dictionary\|relatives\|enhance` | Translation, dictionary lookup, related vocabulary, or text enhancement |
+| `--scenario general\|prompt\|tech\|career\|spoken\|formal\|email\|vibe` | Writing context for Enhance (default: `general`) |
 | `--tone NAME`, `--tone-instructions TEXT` | Translation style presets (`casual`, `formal`, `polite`, `spoken`, `business`); general models only, ignored in dictionary mode |
 | `--rerun retry\|more_literal\|more_natural` | Regenerate; translation-only models support `retry` only |
 | `--no-spellcheck` | Translate exactly what you typed (spelling correction is on by default when installed, using the selected or confidently detected source language) |
@@ -218,7 +323,8 @@ How the app treats them:
   every feature. Any Ollama chat model you pull shows up in the web UI automatically.
 - **Dictionary mode** always runs on a general model. If a translation-only model is selected, the app uses
   `dictionary_model` from `config.toml` for that backend.
-- **Prompt enhancement** also uses a general model and the same fallback. It preserves the original draft
+- **Relatives** uses a general model and the dictionary-model fallback for translation-only models.
+- **Enhance** also uses a general model and the same fallback. It preserves the original draft
   before inference, including code and identifiers; translation spelling correction is bypassed.
 - **Auto-detect** with the `text` extra first identifies the source among the app's translation and spelling
   languages, then passes that language to spelling correction and translation. Uncertain detection limits
@@ -233,7 +339,7 @@ Everything lives in [`config.toml`](config.toml); use `--config path.toml` to lo
 
 ```toml
 [provider]
-name = "ollama"                 # default backend for the CLI: "ollama" or "transformers"
+name = "ollama"                 # "ollama", "transformers", "gemini", or "openai"
 
 [ollama]
 host = "http://localhost:11434"
@@ -261,14 +367,15 @@ explain_lang = "EN"             # language for notes and explanations
 temperature = 0.2
 
 [enhancement]
-num_ctx = 8192                 # Ollama context for draft prompts
+num_ctx = 8192                 # Ollama context for text enhancement
 max_new_tokens = 2048          # output budget on either backend
 ```
 
-Prompt enhancement has a separate context/output budget so longer drafts are not limited by short
+Enhance and Relatives use this separate local context/output budget so longer results are not limited by short
 dictionary-response settings. Increase these values for longer drafts; a larger context consumes more
 GPU memory. Switching Ollama context sizes can reload the model. LLM rewrites can still alter nuances,
-so review the enhanced prompt before using it.
+so review the enhanced text before using it. The JSON response keeps the `enhanced_prompt` field name
+for compatibility; this field contains the rewritten text for every scenario.
 
 ### RTX 4080 / 16 GB GPU
 
@@ -403,6 +510,7 @@ translator_app/
   core.py                 routing: picks model + prompt style, parses results
   prompting.py            JSON-schema prompts, HY-MT / TranslateGemma templates, language detection
   ollama.py               Ollama HTTP client
+  cloud.py                OpenAI / Gemini HTTP client, environment keys, API errors
   hf_transformers.py      Hugging Face model loading, caching, generation
   spelling.py             "did you mean" correction (pyspellchecker)
   furigana.py             漢字（かんじ） readings (fugashi + unidic-lite)

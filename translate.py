@@ -8,11 +8,13 @@ from dataclasses import asdict, replace
 
 from translator_app import furigana
 
-from translator_app.config import ProviderConfig, load_config
+from translator_app.config import PROVIDERS, ProviderConfig, load_config
+from translator_app.cloud import CloudError
 from translator_app.core import ProviderResponseParseError, translate_text
 from translator_app.hf_transformers import TransformersError
 from translator_app.models import RerunHint, TranslateRequest
 from translator_app.ollama import OllamaError
+from translator_app.prompting import ENHANCEMENT_SCENARIOS
 
 
 def _read_text_from_stdin() -> str:
@@ -24,12 +26,13 @@ def _read_text_from_stdin() -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="LLM-backed translator with pluggable model backends.")
-    parser.add_argument("text", nargs="?", help="Text or draft prompt (or omit to read stdin).")
+    parser.add_argument("text", nargs="?", help="Text to process (or omit to read stdin).")
 
     parser.add_argument("--config", default="config.toml", help="Path to config TOML.")
-    parser.add_argument("--provider", choices=("ollama", "transformers"), default=None)
+    parser.add_argument("--provider", choices=PROVIDERS, default=None)
     parser.add_argument("--model", default=None, help="Override the provider's configured model.")
-    parser.add_argument("--mode", choices=("translate", "dictionary", "enhance"), default=None)
+    parser.add_argument("--mode", choices=("translate", "dictionary", "enhance", "relatives"), default=None)
+    parser.add_argument("--scenario", choices=tuple(ENHANCEMENT_SCENARIOS), default="general", help="Writing scenario for Enhance.")
     parser.add_argument("--from", dest="source_lang", default=None, help='Source language (or "auto").')
     parser.add_argument("--to", dest="target_lang", default=None, help="Target language.")
 
@@ -74,11 +77,12 @@ def main(argv: list[str] | None = None) -> int:
         temperature=args.temperature if args.temperature is not None else config.defaults.temperature,
         model=args.model,
         spellcheck=not args.no_spellcheck,
+        scenario=args.scenario,
     )
 
     try:
         result = translate_text(request, config=config)
-    except (OllamaError, TransformersError, ProviderResponseParseError, ValueError) as exc:
+    except (CloudError, OllamaError, TransformersError, ProviderResponseParseError, ValueError) as exc:
         if args.debug:
             if getattr(exc, "raw_response", None):
                 print("=== raw_response ===", file=sys.stderr)
@@ -90,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
 
     payload = asdict(result)
     source_furigana = None
-    if args.furigana and request.mode != "enhance":
+    if args.furigana and request.mode not in ("enhance", "relatives"):
         if not furigana.available():
             print("error: --furigana needs the text extra: pip install -e '.[text]'", file=sys.stderr)
             return 1
@@ -127,6 +131,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if request.mode == "dictionary":
         print(f"Term: {payload.get('term')}")
+        for pronunciation in payload.get("pronunciations", []):
+            print(f"{pronunciation['label']} IPA: {pronunciation['ipa']}")
         for entry in payload.get("entries", []):
             pos = entry.get("pos") or "—"
             print(f"\n[{pos}]")
@@ -139,6 +145,18 @@ def main(argv: list[str] | None = None) -> int:
                 notes = sense.get("usage_notes")
                 if notes:
                     print(f"   note: {notes}")
+        return 0
+
+    if request.mode == "relatives":
+        print(f"Term: {payload['term']}")
+        for group in ("derivations", "synonyms", "antonyms"):
+            print(f"\n{group.title()}:")
+            if not payload[group]:
+                print("None found.")
+            for term in payload[group]:
+                print(f"{term['term']}\t{term['pos']}\t{term['meaning']}")
+        if payload.get("notes"):
+            print(f"\nNotes: {payload['notes']}")
         return 0
 
     print(payload.get("translation", ""))

@@ -13,28 +13,37 @@ from pathlib import Path
 from typing import Any
 
 from translator_app import furigana, spelling
-from translator_app.config import AppConfig, ProviderConfig, load_config
+from translator_app.config import AppConfig, PROVIDERS, ProviderConfig, load_config
+from translator_app.cloud import CloudError, key_available
 from translator_app.core import ProviderResponseParseError, translate_text
 from translator_app.hf_transformers import TransformersError, dependencies_available, is_model_cached
 from translator_app.models import RerunHint, TranslateRequest
 from translator_app.ollama import OllamaError, list_models
-from translator_app.prompting import LANGUAGES, prompt_style_for
+from translator_app.prompting import ENHANCEMENT_SCENARIOS, SCENARIO_DESCRIPTIONS, LANGUAGES, prompt_style_for
+from translator_app.vocabulary import MAX_RELATIVES_CHARS, MAX_RELATIVES_WORDS, RELATIVES_INPUT_HINT, validate_relatives_text
 
 INDEX_HTML = Path(__file__).resolve().parent / "translator_app" / "web" / "index.html"
 MAX_TEXT_CHARS = 20_000
 
 
 def _app_info(config: AppConfig) -> dict[str, Any]:
-    """Models from both backends. The UI sends back (provider, model) and the server routes accordingly."""
+    """Configured models; credentials stay in the server environment."""
     info: dict[str, Any] = {
         "provider": config.provider.name,
         "defaults": asdict(config.defaults),
         "languages": [{"code": code, "name": names[0]} for code, names in LANGUAGES.items()],
+        "enhancement_scenarios": [
+            {"id": key, "label": value[0], "description": SCENARIO_DESCRIPTIONS[key]}
+            for key, value in ENHANCEMENT_SCENARIOS.items()
+        ],
+        "relatives_limits": {"words": MAX_RELATIVES_WORDS, "chars": MAX_RELATIVES_CHARS, "hint": RELATIVES_INPUT_HINT},
         "models": [],
         "default_model": {"provider": config.provider.name, "name": _default_model(config)},
         "dictionary_models": {
             "ollama": config.ollama.dictionary_model,
             "transformers": config.transformers.dictionary_model,
+            "openai": config.openai.model,
+            "gemini": config.gemini.model,
         },
         "features": {"spellcheck": spelling.available(), "furigana": furigana.available()},
         "errors": [],
@@ -57,19 +66,26 @@ def _app_info(config: AppConfig) -> dict[str, Any]:
             entry = _model_entry("transformers", name, available=False, reason="run with .venv/bin/python")
         info["models"].append(entry)
 
+    for provider in ("openai", "gemini"):
+        cloud_config = getattr(config, provider)
+        for name in dict.fromkeys([cloud_config.model, *cloud_config.models]):
+            info["models"].append(_model_entry(
+                provider, name, available=key_available(cloud_config), reason="API KEY not set",
+            ))
+
     info["models"].sort(key=lambda m: (m["provider"] != "ollama", not m["translation_only"], m["name"]))
     return info
 
 
 def _default_model(config: AppConfig) -> str:
-    return config.transformers.model if config.provider.name == "transformers" else config.ollama.model
+    return getattr(config, config.provider.name).model
 
 
 def _model_entry(provider: str, name: str, *, available: bool, reason: str) -> dict[str, Any]:
     return {
         "provider": provider,
         "name": name,
-        "translation_only": prompt_style_for(name) != "json",
+        "translation_only": provider not in ("openai", "gemini") and prompt_style_for(name) != "json",
         "available": available,
         "reason": None if available else reason,
     }
@@ -78,20 +94,27 @@ def _model_entry(provider: str, name: str, *, available: bool, reason: str) -> d
 def _request_from_body(body: dict[str, Any], config: AppConfig) -> TranslateRequest:
     text = str(body.get("text") or "")
     if not text.strip():
-        raise ValueError("Enter some text or a prompt.")
+        raise ValueError("Enter some text.")
     if len(text) > MAX_TEXT_CHARS:
         raise ValueError(f"Text is too long ({len(text)} characters, max {MAX_TEXT_CHARS}).")
     mode = body.get("mode") or "translate"
-    if mode not in ("translate", "dictionary", "enhance"):
+    if mode not in ("translate", "dictionary", "enhance", "relatives"):
         raise ValueError(f"Unknown mode: {mode!r}")
+    if mode == "relatives":
+        validate_relatives_text(text)
     rerun = body.get("rerun")
     if rerun not in (None, "", "retry", "more_literal", "more_natural"):
         raise ValueError(f"Unknown rerun style: {rerun!r}")
     if mode == "enhance" and rerun not in (None, "", "retry"):
-        raise ValueError("Prompt enhancement supports Retry only.")
+        raise ValueError("Enhance supports Retry only.")
+    if mode == "relatives" and rerun:
+        raise ValueError("Relatives does not support translation reruns.")
+    scenario = body.get("scenario", "general")
+    if mode == "enhance" and (not isinstance(scenario, str) or scenario not in ENHANCEMENT_SCENARIOS):
+        raise ValueError(f"Unknown enhancement scenario: {scenario!r}")
     return TranslateRequest(
         text=text,
-        source_lang=str(body.get("source_lang") or config.defaults.source_lang),
+        source_lang="auto" if mode == "relatives" else str(body.get("source_lang") or config.defaults.source_lang),
         target_lang=str(body.get("target_lang") or config.defaults.target_lang),
         mode=mode,
         tone=str(body.get("tone") or config.defaults.tone),
@@ -101,12 +124,13 @@ def _request_from_body(body: dict[str, Any], config: AppConfig) -> TranslateRequ
         temperature=config.defaults.temperature,
         model=(str(body["model"]) if body.get("model") else None),
         spellcheck=mode != "enhance" and body.get("spellcheck", True) is not False,
+        scenario=scenario if mode == "enhance" else "general",
     )
 
 
 def _with_furigana(payload: dict[str, Any], request: TranslateRequest) -> dict[str, Any]:
     """Attach a furigana-annotated copy (payload["furigana"]) when Japanese is involved, so the UI can toggle it."""
-    if request.mode == "enhance" or not furigana.available():
+    if request.mode in ("enhance", "relatives") or not furigana.available():
         return payload
     fix = payload.get("spelling")
     annotated = furigana.annotate_result(
@@ -160,16 +184,18 @@ def make_handler(config: AppConfig) -> type[BaseHTTPRequestHandler]:
                 self._send_json(400, {"error": str(exc)})
                 return
             provider = body.get("provider") or config.provider.name
-            if provider not in ("ollama", "transformers"):
+            if provider not in PROVIDERS:
                 self._send_json(400, {"error": f"Unknown provider: {provider!r}"})
                 return
             try:
                 result = translate_text(request, config=replace(config, provider=ProviderConfig(name=provider)))
-            except (OllamaError, TransformersError, ProviderResponseParseError, ValueError) as exc:
+            except (CloudError, OllamaError, TransformersError, ProviderResponseParseError, ValueError) as exc:
                 self._send_json(502, {"error": str(exc)})
                 return
             payload = _with_furigana(asdict(result), request)
             payload["mode"] = request.mode
+            if request.mode in ("translate", "dictionary"):
+                payload["target_lang"] = request.target_lang
             self._send_json(200, payload)
 
     return Handler

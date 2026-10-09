@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 
-Mode = Literal["translate", "dictionary", "enhance"]
+Mode = Literal["translate", "dictionary", "enhance", "relatives"]
 RerunStyle = Literal["retry", "more_literal", "more_natural"]
 
 
@@ -48,6 +48,8 @@ class TranslateRequest:
     model: str | None = None
     # Correct likely misspellings after resolving the source language (needs the optional `text` extra).
     spellcheck: bool = True
+    # Writing context used by Enhance; other modes ignore it.
+    scenario: str = "general"
 
 
 @dataclass(frozen=True)
@@ -64,6 +66,7 @@ class TranslateResult:
 
 @dataclass(frozen=True)
 class PromptEnhanceResult:
+    # Keep the existing JSON field for CLI clients and saved web history.
     enhanced_prompt: str
     clarifications: list[str] = field(default_factory=list)
     provider: str | None = None
@@ -87,9 +90,36 @@ class DictionaryEntry:
 
 
 @dataclass(frozen=True)
+class Pronunciation:
+    label: str
+    ipa: str
+
+
+@dataclass(frozen=True)
 class DictionaryResult:
     term: str
     entries: list[DictionaryEntry]
+    provider: str | None = None
+    model: str | None = None
+    latency_ms: int | None = None
+    spelling: SpellingFix | None = None
+    pronunciations: list[Pronunciation] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class RelatedTerm:
+    term: str
+    pos: str
+    meaning: str
+
+
+@dataclass(frozen=True)
+class RelativesResult:
+    term: str
+    derivations: list[RelatedTerm] = field(default_factory=list)
+    synonyms: list[RelatedTerm] = field(default_factory=list)
+    antonyms: list[RelatedTerm] = field(default_factory=list)
+    notes: str | None = None
     provider: str | None = None
     model: str | None = None
     latency_ms: int | None = None

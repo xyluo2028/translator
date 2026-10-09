@@ -6,18 +6,24 @@ from dataclasses import replace
 from typing import Any, TypeVar
 
 from translator_app import spelling
-from translator_app.config import AppConfig
+from translator_app.config import AppConfig, PROVIDERS
+from translator_app.cloud import chat_json as cloud_chat_json
 from translator_app.hf_transformers import TransformersError, chat_json as hf_chat_json, chat_messages as hf_chat_messages
 from translator_app.models import (
     DictionaryEntry,
     DictionaryResult,
     DictionarySense,
     PromptEnhanceResult,
+    Pronunciation,
+    RelatedTerm,
+    RelativesResult,
     TranslateRequest,
     TranslateResult,
 )
 from translator_app.ollama import OllamaError, chat_json, chat_text, generate_json
+from translator_app.vocabulary import validate_relatives_text
 from translator_app.prompting import (
+    ENHANCEMENT_SCENARIOS,
     PromptStyle,
     build_plain_messages,
     build_plain_prompt,
@@ -35,10 +41,27 @@ class ProviderResponseParseError(RuntimeError):
 
 
 T = TypeVar("T")
-Result = TranslateResult | DictionaryResult | PromptEnhanceResult
+Result = TranslateResult | DictionaryResult | PromptEnhanceResult | RelativesResult
 
 
 def _response_schema_for(request: TranslateRequest) -> dict[str, Any]:
+    if request.mode == "relatives":
+        related_term = {
+            "type": "object", "additionalProperties": False,
+            "required": ["term", "pos", "meaning"],
+            "properties": {key: {"type": "string"} for key in ("term", "pos", "meaning")},
+        }
+        return {
+            "type": "object", "additionalProperties": False,
+            "required": ["term", "derivations", "synonyms", "antonyms", "notes"],
+            "properties": {
+                "term": {"type": "string"},
+                "derivations": {"type": "array", "maxItems": 8, "items": related_term},
+                "synonyms": {"type": "array", "maxItems": 6, "items": related_term},
+                "antonyms": {"type": "array", "maxItems": 6, "items": related_term},
+                "notes": {"type": ["string", "null"]},
+            },
+        }
     if request.mode == "enhance":
         return {
             "type": "object",
@@ -54,9 +77,17 @@ def _response_schema_for(request: TranslateRequest) -> dict[str, Any]:
         return {
             "type": "object",
             "additionalProperties": False,
-            "required": ["term", "entries"],
+            "required": ["term", "entries", "pronunciations"],
             "properties": {
                 "term": {"type": "string"},
+                "pronunciations": {
+                    "type": "array", "maxItems": 4,
+                    "items": {
+                        "type": "object", "additionalProperties": False,
+                        "required": ["label", "ipa"],
+                        "properties": {"label": {"type": "string"}, "ipa": {"type": "string"}},
+                    },
+                },
                 "entries": {
                     "type": "array",
                     "maxItems": 2,
@@ -208,7 +239,42 @@ def _as_dictionary_result(
             entries.append(DictionaryEntry(pos=pos_s, senses=senses))
     if not entries:
         raise ProviderResponseParseError("No dictionary entries produced.", raw_response=json.dumps(obj))
-    return DictionaryResult(term=term, entries=entries, provider=provider, model=model, latency_ms=latency_ms)
+    pronunciations_raw = obj.get("pronunciations", [])
+    if not isinstance(pronunciations_raw, list):
+        raise ProviderResponseParseError("Expected 'pronunciations' to be a list.", raw_response=json.dumps(obj))
+    pronunciations = []
+    for item in pronunciations_raw[:4]:
+        if not isinstance(item, dict) or any(not isinstance(item.get(key), str) or not item[key].strip() for key in ("label", "ipa")):
+            raise ProviderResponseParseError("Invalid IPA pronunciation in model output.", raw_response=json.dumps(obj))
+        pronunciations.append(Pronunciation(label=item["label"].strip(), ipa=item["ipa"].strip()))
+    return DictionaryResult(
+        term=term, entries=entries, provider=provider, model=model, latency_ms=latency_ms,
+        pronunciations=pronunciations,
+    )
+
+
+def _as_relatives_result(
+    request: TranslateRequest, obj: dict[str, Any], *, provider: str, model: str | None, latency_ms: int | None,
+) -> RelativesResult:
+    groups = {}
+    for name, limit in (("derivations", 8), ("synonyms", 6), ("antonyms", 6)):
+        values = obj.get(name)
+        if not isinstance(values, list):
+            raise ProviderResponseParseError(f"Expected '{name}' to be a list.", raw_response=json.dumps(obj))
+        terms = []
+        for item in values[:limit]:
+            if not isinstance(item, dict) or any(not isinstance(item.get(key), str) or not item[key].strip() for key in ("term", "pos", "meaning")):
+                raise ProviderResponseParseError(f"Invalid term in '{name}'.", raw_response=json.dumps(obj))
+            terms.append(RelatedTerm(**{key: item[key].strip() for key in ("term", "pos", "meaning")}))
+        groups[name] = terms
+    term = obj.get("term", request.text)
+    notes = obj.get("notes")
+    if not isinstance(term, str) or not term.strip() or (notes is not None and not isinstance(notes, str)):
+        raise ProviderResponseParseError("Invalid relatives result.", raw_response=json.dumps(obj))
+    return RelativesResult(
+        term=term.strip(), **groups, notes=notes.strip() or None if notes is not None else None,
+        provider=provider, model=model, latency_ms=latency_ms,
+    )
 
 
 def _as_prompt_enhance_result(
@@ -228,31 +294,39 @@ def _as_prompt_enhance_result(
 
 
 def resolve_model(request: TranslateRequest, config: AppConfig) -> tuple[str, PromptStyle]:
-    """Use a general model for dictionary entries and prompt enhancement."""
+    """Use a general model for dictionary entries and text enhancement."""
+    if config.provider.name in ("openai", "gemini"):
+        return request.model or getattr(config, config.provider.name).model, "json"
     if config.provider.name == "transformers":
         model, dictionary_model = request.model or config.transformers.model, config.transformers.dictionary_model
     else:
         model, dictionary_model = request.model or config.ollama.model, config.ollama.dictionary_model
     style = prompt_style_for(model)
-    if style != "json" and request.mode in ("dictionary", "enhance"):
+    if style != "json" and request.mode in ("dictionary", "enhance", "relatives"):
         model = dictionary_model
         style = prompt_style_for(model)
-    if style != "json" and request.mode in ("dictionary", "enhance"):
-        task = "Prompt enhancement" if request.mode == "enhance" else "Dictionary mode"
+    if style != "json" and request.mode in ("dictionary", "enhance", "relatives"):
+        task = {"enhance": "Enhance", "relatives": "Relatives", "dictionary": "Dictionary mode"}[request.mode]
         raise ValueError(f"{task} needs a general chat model; {model!r} is translation-only.")
     return model, style
 
 
 def translate_text(request: TranslateRequest, *, config: AppConfig) -> Result:
-    if config.provider.name not in ("ollama", "transformers"):
+    if config.provider.name not in PROVIDERS:
         raise ValueError(f"Unsupported provider: {config.provider.name!r}")
-    if request.mode not in ("translate", "dictionary", "enhance"):
+    if request.mode not in ("translate", "dictionary", "enhance", "relatives"):
         raise ValueError(f"Unsupported mode: {request.mode!r}")
+    if request.mode == "relatives":
+        validate_relatives_text(request.text)
+        if request.rerun:
+            raise ValueError("Relatives does not support translation reruns.")
     if request.mode == "enhance":
+        if request.scenario not in ENHANCEMENT_SCENARIOS:
+            raise ValueError(f"Unknown enhancement scenario: {request.scenario!r}")
         if not request.text.strip():
-            raise ValueError("Enter a prompt to enhance.")
+            raise ValueError("Enter some text to enhance.")
         if request.rerun and request.rerun.style != "retry":
-            raise ValueError("Prompt enhancement supports Retry only.")
+            raise ValueError("Enhance supports Retry only.")
         # Preserve code, paths, and identifiers; the model handles prose corrections.
         return _translate(request, config=config)
 
@@ -274,7 +348,7 @@ def _translate(request: TranslateRequest, *, config: AppConfig) -> Result:
     if style != "json":
         return _translate_plain(request, config=config, model=model, style=style)
 
-    if request.mode == "enhance":
+    if request.mode in ("enhance", "relatives"):
         config = replace(
             config,
             ollama=replace(config.ollama, options={
@@ -287,12 +361,34 @@ def _translate(request: TranslateRequest, *, config: AppConfig) -> Result:
 
     system = build_system_prompt(request)
     user = build_user_prompt(request)
+    if config.provider.name in ("openai", "gemini"):
+        return _translate_with_cloud(request, config=config, model=model, system=system, user=user)
     if config.provider.name == "ollama":
         return _translate_with_ollama(
             request, config=config, model=model, system=system, user=user, response_schema=_response_schema_for(request)
         )
     config = replace(config, transformers=replace(config.transformers, model=model))
     return _translate_with_transformers(request, config=config, system=system, user=user)
+
+
+def _translate_with_cloud(
+    request: TranslateRequest, *, config: AppConfig, model: str, system: str, user: str,
+) -> Result:
+    # One billable request per user action; no automatic repair calls or provider fallback.
+    provider = config.provider.name
+    resp = cloud_chat_json(
+        provider=provider, config=getattr(config, provider), model=model, system=system, user=user,
+        response_schema=_response_schema_for(request), temperature=request.temperature,
+    )
+    obj = _parse_json(resp.content)
+    metadata = dict(provider=provider, model=resp.model, latency_ms=resp.latency_ms)
+    if request.mode == "relatives":
+        return _as_relatives_result(request, obj, **metadata)
+    if request.mode == "dictionary":
+        return _as_dictionary_result(request, obj, **metadata)
+    if request.mode == "enhance":
+        return _as_prompt_enhance_result(obj, **metadata)
+    return _as_translate_result(obj, **metadata)
 
 
 def _translate_plain(
@@ -442,6 +538,8 @@ def _translate_with_ollama(
         return _as_dictionary_result(request, obj, provider="ollama", model=resp.model, latency_ms=resp.latency_ms)
 
     assert resp is not None
+    if request.mode == "relatives":
+        return _as_relatives_result(request, obj, provider="ollama", model=resp.model, latency_ms=resp.latency_ms)
     if request.mode == "enhance":
         return _as_prompt_enhance_result(obj, provider="ollama", model=resp.model, latency_ms=resp.latency_ms)
     return _as_translate_result(obj, provider="ollama", model=resp.model, latency_ms=resp.latency_ms)
@@ -489,6 +587,8 @@ def _translate_with_transformers(
         raise last_parse_error
 
     assert resp is not None
+    if request.mode == "relatives":
+        return _as_relatives_result(request, obj, provider="transformers", model=resp.model, latency_ms=resp.latency_ms)
     if request.mode == "dictionary":
         return _as_dictionary_result(
             request,

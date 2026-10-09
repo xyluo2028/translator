@@ -111,6 +111,17 @@
   @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
 
   .hint { font-size: 13px; color: var(--muted); }
+  .context-hint { margin: -4px 0 12px; }
+  .context-hint p { margin: 3px 0; }
+  .scenario-explanation { color: var(--text); }
+  .pronunciation { color: var(--muted); font-size: 15px; margin: 4px 0; }
+  .relatives-table { width: 100%; border-collapse: collapse; font-size: 14px; text-align: left; }
+  .relatives-table th, .relatives-table td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .relatives-table th { color: var(--muted); font-weight: 500; }
+  .relatives-table td:first-child { font-weight: 600; }
+  .relatives-table td:nth-child(2) { color: var(--muted); }
+  .relatives-table caption { text-align: left; color: var(--muted); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; padding: 18px 0 6px; }
+  .audio-status { flex-basis: 100%; color: var(--muted); }
   label.toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
   label.toggle input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
   label.toggle:has(input:disabled) { opacity: .45; cursor: default; }
@@ -155,13 +166,17 @@
     <div class="seg" role="group" aria-label="Mode">
       <button type="button" data-mode="translate" aria-pressed="true">Translate</button>
       <button type="button" data-mode="dictionary" aria-pressed="false">Dictionary</button>
-      <button type="button" data-mode="enhance" aria-pressed="false">Enhance prompt</button>
+      <button type="button" data-mode="relatives" aria-pressed="false">Relatives</button>
+      <button type="button" data-mode="enhance" aria-pressed="false">Enhance</button>
     </div>
     <div class="langs" id="languages">
       <select id="source" aria-label="Source language"></select>
       <button type="button" class="swap" id="swap" title="Swap languages" aria-label="Swap languages">⇄</button>
       <select id="target" aria-label="Target language"></select>
     </div>
+    <label class="field" id="scenarioLabel" hidden>Scenario
+      <select id="scenario" aria-label="Enhancement scenario"></select>
+    </label>
     <label class="field" id="toneLabel">Tone
       <select id="tone" aria-label="Tone">
         <option value="neutral">Neutral</option>
@@ -175,7 +190,10 @@
     <label class="toggle" id="furiganaLabel" title="Show readings for Japanese kanji: 漢字（かんじ）">
       <input type="checkbox" id="furigana" aria-label="振り仮名 (furigana)"> 振り仮名
     </label>
-    <span id="modelHint" class="hint"></span>
+  </div>
+  <div class="context-hint hint" aria-live="polite">
+    <p id="scenarioExplanation" class="scenario-explanation" hidden></p>
+    <p id="modelHint"></p>
   </div>
 
   <div class="panels">
@@ -194,10 +212,12 @@
       <div class="panel-foot">
         <span id="meta" class="meta"></span>
         <span class="spacer"></span>
+        <button type="button" id="play" hidden disabled aria-label="Play translated text">▶ Play</button>
         <button type="button" id="copy" disabled>Copy</button>
         <button type="button" id="retry" disabled title="Generate a different translation">Retry</button>
         <button type="button" id="literal" disabled>More literal</button>
         <button type="button" id="natural" disabled>More natural</button>
+        <span id="audioStatus" class="audio-status" role="status" hidden></span>
       </div>
     </section>
   </div>
@@ -211,6 +231,7 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const state = { info: null, mode: "translate", translationTone: "neutral", busy: false, last: null, lastRequest: null };
+let activeSpeech = null;
 const HISTORY_KEY = "translator.history.v1";
 const PREFS_KEY = "translator.prefs.v1";
 
@@ -261,13 +282,23 @@ async function init() {
   if (!src.value) src.value = "auto";
   if (!tgt.value) tgt.value = "ZH";
   state.translationTone = prefs.tone || info.defaults.tone || "neutral";
+  for (const scenario of info.enhancement_scenarios) {
+    $("scenario").append(el("option", { value: scenario.id, textContent: scenario.label }));
+  }
+  $("scenario").value = prefs.scenario || "general";
+  if (!$("scenario").value) $("scenario").value = "general";
   const fg = $("furigana");
   fg.disabled = !info.features?.furigana;
   fg.checked = !fg.disabled && prefs.furigana !== false;
   if (fg.disabled) $("furiganaLabel").title = "Needs the text extra: .venv/bin/pip install -e '.[text]', then run webui.py with .venv/bin/python";
 
   const modelSel = $("model");
-  const groups = { ollama: el("optgroup", { label: "Ollama" }), transformers: el("optgroup", { label: "Hugging Face" }) };
+  const groups = {
+    ollama: el("optgroup", { label: "Ollama" }),
+    transformers: el("optgroup", { label: "Hugging Face" }),
+    openai: el("optgroup", { label: "OpenAI · cloud API" }),
+    gemini: el("optgroup", { label: "Google Gemini · cloud API" }),
+  };
   for (const m of info.models) {
     const tag = m.translation_only ? "translation" : "general";
     const label = `${shortName(m.name)} · ${tag}${m.available ? "" : ` (${m.reason})`}`;
@@ -277,8 +308,8 @@ async function init() {
   const preferred = [prefs.model, modelKey(info.default_model)].find((k) => info.models.some((m) => modelKey(m) === k && m.available));
   if (preferred) modelSel.value = preferred;
 
-  if (info.errors.length) showBanner(info.errors.join("\n"));
-  else if (!info.models.some((m) => m.available)) showBanner("No models available. Pull one with: ollama pull translategemma:12b");
+  if (!info.models.some((m) => m.available)) showBanner("No models available. Pull an Ollama model or set GEMINI_API_KEY / OPENAI_API_KEY before starting the server.");
+  else if (info.errors.length && currentModel()?.provider === "ollama") showBanner(info.errors.join("\n"));
 
   setMode(prefs.mode || "translate");
   renderHistory();
@@ -286,53 +317,88 @@ async function init() {
 }
 
 function savePrefs() {
-  store(PREFS_KEY, { source: $("source").value, target: $("target").value, tone: state.translationTone, model: $("model").value, mode: state.mode, furigana: $("furigana").checked });
+  store(PREFS_KEY, { source: $("source").value, target: $("target").value, tone: state.translationTone, model: $("model").value, mode: state.mode, scenario: $("scenario").value, furigana: $("furigana").checked });
 }
 
 function setMode(mode) {
-  state.mode = ["translate", "dictionary", "enhance"].includes(mode) ? mode : "translate";
+  if (state.busy) return;
+  stopAudio();
+  if (state.mode !== mode) {
+    state.last = null;
+    state.lastRequest = null;
+    $("meta").textContent = "";
+    $("sourceReading").hidden = true;
+  }
+  state.mode = ["translate", "dictionary", "enhance", "relatives"].includes(mode) ? mode : "translate";
   for (const b of document.querySelectorAll(".seg button")) b.setAttribute("aria-pressed", String(b.dataset.mode === state.mode));
   const enhance = state.mode === "enhance";
-  $("go").firstChild.textContent = enhance ? "Enhance " : state.mode === "dictionary" ? "Look up " : "Translate ";
-  $("input").placeholder = enhance ? "Paste the prompt you plan to send to an AI…" : state.mode === "dictionary" ? "Enter a word or phrase…" : "Type or paste text…";
-  $("input").setAttribute("aria-label", enhance ? "Draft prompt to enhance" : "Text to translate");
-  $("languages").hidden = enhance;
-  $("toneLabel").hidden = enhance;
-  $("furiganaLabel").hidden = enhance;
-  $("literal").hidden = enhance;
-  $("natural").hidden = enhance;
-  if (enhance) $("sourceReading").hidden = true;
-  if (!state.last) $("output").replaceChildren(el("p", { className: "placeholder", textContent: enhance ? "Your enhanced prompt appears here." : "Translation appears here." }));
+  const vocabulary = ["dictionary", "relatives"].includes(state.mode);
+  $("go").firstChild.textContent = enhance ? "Enhance " : state.mode === "relatives" ? "Find relatives " : vocabulary ? "Look up " : "Translate ";
+  $("input").placeholder = enhance ? "Type or paste text to improve…" : vocabulary ? "Enter a word or short phrase…" : "Type or paste text…";
+  $("input").setAttribute("aria-label", enhance ? "Text to enhance" : "Text to translate");
+  $("languages").hidden = enhance || state.mode === "relatives";
+  $("scenarioLabel").hidden = !enhance;
+  $("toneLabel").hidden = enhance || state.mode === "relatives";
+  $("furiganaLabel").hidden = enhance || state.mode === "relatives";
+  $("literal").hidden = state.mode !== "translate";
+  $("natural").hidden = state.mode !== "translate";
+  if (enhance || state.mode === "relatives") $("sourceReading").hidden = true;
+  if (!state.last) $("output").replaceChildren(el("p", { className: "placeholder", textContent:
+    enhance ? "Your enhanced text appears here." : state.mode === "relatives" ? "Word families, synonyms, and antonyms appear here."
+      : state.mode === "dictionary" ? "Definitions and pronunciation appear here." : "Translation appears here." }));
   updateControls();
 }
 
 function updateControls() {
   const plain = isTranslationOnly();
   const dict = state.mode === "dictionary";
+  const relatives = state.mode === "relatives";
   const enhance = state.mode === "enhance";
+  $("scenario").disabled = state.busy;
+  for (const b of document.querySelectorAll(".seg button")) b.disabled = state.busy;
   const dictModel = state.info?.dictionary_models[currentModel()?.provider];
-  $("tone").disabled = dict || enhance || plain;
+  $("tone").disabled = dict || relatives || enhance || plain;
   $("tone").value = $("tone").disabled ? "neutral" : state.translationTone;
   $("toneLabel").title = dict ? "Dictionary entries always use a neutral tone."
     : plain ? "Tone needs a general model, such as Gemma or gpt-oss." : "";
   let hint = "";
+  const explanation = state.info?.enhancement_scenarios.find((s) => s.id === $("scenario").value)?.description || "";
+  $("scenarioExplanation").textContent = explanation;
+  $("scenarioExplanation").hidden = !enhance || !explanation;
   if (enhance) hint = plain && dictModel
     ? `Uses ${shortName(dictModel)} · preserves intent and language`
     : "Preserves intent and language · improves clarity and structure";
   else if (dict) hint = plain && dictModel
     ? `Dictionary uses ${shortName(dictModel)} · neutral tone`
     : "Dictionary uses neutral tone";
+  else if (relatives) hint = `Detects the input language · words and meanings stay in that language. ${relativesInputHint()}${plain && dictModel ? ` Uses ${shortName(dictModel)}.` : ""}`;
   else if (plain) hint = "Tone needs a general model";
+  if (["openai", "gemini"].includes(currentModel()?.provider)) {
+    const vendor = currentModel().provider === "gemini" ? "Google" : "OpenAI";
+    hint = [hint, `Text is sent to ${vendor} · API quotas/pricing apply`].filter(Boolean).join(" · ");
+  }
   $("modelHint").textContent = hint;
   $("count").textContent = `${$("input").value.length} chars`;
-  $("go").disabled = state.busy || !$("input").value.trim();
+  $("go").disabled = state.busy || !$("input").value.trim() || (relatives && !validRelativesInput($("input").value));
   const has = !!state.last && !state.busy;
   const lastPlain = state.last?.mode === "translate" && isPlainModel(state.last.model);
   $("copy").disabled = !has;
   $("retry").disabled = !has || state.last?.mode !== state.mode || !["translate", "enhance"].includes(state.last?.mode);
-  $("retry").title = enhance ? "Generate another enhanced prompt" : "Generate a different translation";
+  $("retry").title = enhance ? "Generate another enhanced version" : "Generate a different translation";
   $("literal").disabled = !has || state.last?.mode !== "translate" || lastPlain;
   $("natural").disabled = !has || state.last?.mode !== "translate" || lastPlain;
+  updateAudioControls();
+}
+
+function relativesInputHint() {
+  return state.info?.relatives_limits?.hint || "Enter one word or a short phrase (up to 5 words and 60 characters), without sentence punctuation.";
+}
+
+function validRelativesInput(text) {
+  const value = text.trim();
+  const limits = state.info?.relatives_limits || { words: 5, chars: 60 };
+  return !!value && Array.from(value).length <= limits.chars && value.split(/\s+/u).length <= limits.words
+    && !/[\n\r.!?。！？;；]/u.test(value) && /\p{L}/u.test(value);
 }
 
 function isPlainModel(name) {
@@ -344,6 +410,8 @@ async function run(rerun = null, overrides = null) {
   const again = (rerun || overrides) && state.lastRequest;
   const text = again ? state.lastRequest.text : $("input").value;
   if (!text.trim() || state.busy) return;
+  if (state.mode === "relatives" && !validRelativesInput(text)) return;
+  stopAudio();
   const body = again ? { ...state.lastRequest, rerun, ...overrides } : {
     text,
     mode: state.mode,
@@ -353,13 +421,19 @@ async function run(rerun = null, overrides = null) {
     provider: currentModel()?.provider || null,
     model: currentModel()?.name || null,
     spellcheck: state.mode !== "enhance",
+    scenario: state.mode === "enhance" ? $("scenario").value : "general",
   };
+  if (body.mode === "relatives") {
+    delete body.source_lang;
+    delete body.target_lang;
+  }
   if (overrides?.text != null) $("input").value = overrides.text;  // show what is actually being translated
   state.busy = true;
   updateControls();
   const out = $("output");
-  const loadHint = body.provider === "transformers" ? "Hugging Face models can take a minute to load on first use" : "the first run loads the model";
-  const action = body.mode === "enhance" ? "Enhancing prompt" : body.mode === "dictionary" ? "Looking up" : "Translating";
+  const loadHint = ["openai", "gemini"].includes(body.provider) ? "sending text to the cloud provider"
+    : body.provider === "transformers" ? "Hugging Face models can take a minute to load on first use" : "the first run loads the model";
+  const action = body.mode === "enhance" ? "Enhancing" : body.mode === "relatives" ? "Finding relatives" : body.mode === "dictionary" ? "Looking up" : "Translating";
   out.replaceChildren(el("p", { className: "placeholder" }, el("span", { className: "spinner" }), ` ${action}… (${loadHint})`));
   $("meta").textContent = "";
   $("sourceReading").hidden = true;
@@ -399,6 +473,9 @@ function render(raw) {
     }
   } else if (data.mode === "dictionary") {
     out.append(el("p", { className: "dict-term", textContent: data.term }));
+    for (const pronunciation of data.pronunciations || []) {
+      out.append(el("p", { className: "pronunciation", textContent: `${pronunciation.label} IPA ${pronunciation.ipa}` }));
+    }
     for (const entry of data.entries || []) {
       out.append(el("span", { className: "dict-pos", textContent: entry.pos || "—" }));
       const ol = el("ol", { className: "dict-senses" });
@@ -412,6 +489,22 @@ function render(raw) {
       }
       out.append(ol);
     }
+  } else if (data.mode === "relatives") {
+    out.append(el("p", { className: "dict-term", textContent: data.term }));
+    for (const [key, title] of [["derivations", "Derivations"], ["synonyms", "Synonyms"], ["antonyms", "Antonyms"]]) {
+      const terms = data[key] || [];
+      if (!terms.length) {
+        out.append(el("h3", { textContent: title }), el("p", { className: "notes", textContent: "None found for this term." }));
+        continue;
+      }
+      const table = el("table", { className: "relatives-table" }, el("caption", { textContent: title }));
+      table.append(el("thead", {}, el("tr", {}, ...["Word / phrase", "Part of speech", "Meaning"].map((label) => el("th", { scope: "col", textContent: label })))));
+      const rows = el("tbody");
+      for (const term of terms) rows.append(el("tr", {}, ...[term.term, term.pos, term.meaning].map((value) => el("td", { textContent: value }))));
+      table.append(rows);
+      out.append(table);
+    }
+    if (data.notes) out.append(el("h3", { textContent: "Notes" }), el("p", { className: "notes", textContent: data.notes }));
   } else {
     out.append(el("div", { className: "main", textContent: data.translation }));
     if (data.alternatives?.length) {
@@ -430,6 +523,107 @@ function render(raw) {
   if (data.detected_source_lang) bits.push(`detected ${data.detected_source_lang.toUpperCase()}`);
   if (data.latency_ms != null) bits.push(`${(data.latency_ms / 1000).toFixed(1)}s`);
   $("meta").textContent = bits.filter(Boolean).join(" · ");
+}
+
+const SPEECH_LANGUAGES = {
+  EN: "en-US", ZH: "zh-CN", "ZH-TW": "zh-TW", JA: "ja-JP", KO: "ko-KR", FR: "fr-FR",
+  DE: "de-DE", ES: "es-ES", PT: "pt-PT", IT: "it-IT", RU: "ru-RU", AR: "ar-SA",
+  TH: "th-TH", VI: "vi-VN", ID: "id-ID", HI: "hi-IN",
+};
+
+function speechAvailable() {
+  return !!window.speechSynthesis && typeof window.SpeechSynthesisUtterance === "function";
+}
+
+function translationSpeechLanguage() {
+  const code = state.last?.target_lang || state.lastRequest?.target_lang || $("target").value;
+  return SPEECH_LANGUAGES[(code || "").toUpperCase()] || code;
+}
+
+function translationVoice() {
+  if (!speechAvailable()) return null;
+  const lang = (translationSpeechLanguage() || "").toLowerCase();
+  const voices = window.speechSynthesis.getVoices().filter((v) => v.lang.toLowerCase().split("-")[0] === lang.split("-")[0]);
+  voices.sort((a, b) => ((b.lang.toLowerCase() === lang ? 2 : 0) + (b.localService ? 1 : 0))
+    - ((a.lang.toLowerCase() === lang ? 2 : 0) + (a.localService ? 1 : 0)));
+  return voices[0] || null;
+}
+
+function updateAudioControls() {
+  const playable = state.mode === "translate" && state.last?.mode === "translate" && !!state.last.translation?.trim();
+  const button = $("play");
+  button.hidden = state.mode !== "translate";
+  const available = speechAvailable();
+  const voice = playable && available ? translationVoice() : null;
+  button.disabled = state.busy || !playable || !voice;
+  button.textContent = activeSpeech ? "■ Stop" : "▶ Play";
+  button.setAttribute("aria-label", activeSpeech ? "Stop translated audio" : "Play translated text");
+  button.setAttribute("aria-pressed", String(!!activeSpeech));
+  button.title = !available ? "Speech playback is unavailable in this browser."
+    : playable && !voice ? "No voice available for this translation's language."
+    : voice ? `Read aloud with ${voice.name}` : "Translate some text to play it aloud.";
+  if (playable && !state.busy && (!available || !voice)) {
+    $("audioStatus").textContent = !available ? "Speech playback is unavailable in this browser."
+      : `No ${translationSpeechLanguage()} voice available. Enable a matching voice in your browser or device.`;
+    $("audioStatus").hidden = false;
+  } else if (!playable || state.busy || activeSpeech || $("audioStatus").textContent.startsWith("No ")
+      || $("audioStatus").textContent.startsWith("Speech playback")) {
+    $("audioStatus").hidden = true;
+  }
+}
+
+function stopAudio() {
+  if (activeSpeech) {
+    activeSpeech = null;
+    window.speechSynthesis.cancel();
+  }
+  $("audioStatus").hidden = true;
+  $("play").textContent = "▶ Play";
+}
+
+function speechChunks(text) {
+  // Small utterances avoid browser limits when reading a long translation.
+  const chars = Array.from(text);
+  const chunks = [];
+  while (chars.length > 240) {
+    let end = 240;
+    for (let i = 239; i >= 120; i--) {
+      if (/[\s.!?。！？]/u.test(chars[i])) { end = i + 1; break; }
+    }
+    chunks.push(chars.splice(0, end).join(""));
+  }
+  if (chars.length) chunks.push(chars.join(""));
+  return chunks;
+}
+
+function playTranslation() {
+  if (activeSpeech) { stopAudio(); updateAudioControls(); return; }
+  if (state.busy || state.mode !== "translate" || state.last?.mode !== "translate" || !speechAvailable()) return;
+  const voice = translationVoice();
+  if (!voice || !state.last.translation?.trim()) return;
+  const session = { chunks: speechChunks(state.last.translation), voice, lang: translationSpeechLanguage(), utterance: null };
+  activeSpeech = session;
+  const next = () => {
+    if (activeSpeech !== session) return;
+    const text = session.chunks.shift();
+    if (!text) { activeSpeech = null; updateAudioControls(); return; }
+    const utterance = new window.SpeechSynthesisUtterance(text);
+    session.utterance = utterance;
+    utterance.lang = session.lang;
+    utterance.voice = session.voice;
+    utterance.onend = next;
+    utterance.onerror = () => {
+      if (activeSpeech !== session) return;
+      stopAudio();
+      $("audioStatus").textContent = "Audio could not play. Check your device's speech voice and try again.";
+      $("audioStatus").hidden = false;
+      updateAudioControls();
+    };
+    try { window.speechSynthesis.speak(utterance); }
+    catch { utterance.onerror(); }
+  };
+  updateAudioControls();
+  next();
 }
 
 function spellingParts(fix, chosen = null, alt = null) {
@@ -491,7 +685,8 @@ function flash(msg) {
 }
 
 function addHistory(req, data) {
-  const out = data.mode === "enhance" ? data.enhanced_prompt : data.mode === "dictionary" ? (data.entries?.[0]?.senses?.[0]?.meaning || "") : data.translation;
+  const out = data.mode === "enhance" ? data.enhanced_prompt : data.mode === "dictionary" ? (data.entries?.[0]?.senses?.[0]?.meaning || "")
+    : data.mode === "relatives" ? `${data.derivations?.length || 0} derivations · ${data.synonyms?.length || 0} synonyms · ${data.antonyms?.length || 0} antonyms` : data.translation;
   const items = load(HISTORY_KEY, []).filter((h) => !(h.req.text === req.text && h.req.target_lang === req.target_lang && h.req.mode === req.mode));
   items.unshift({ req: { ...req, rerun: null }, data, out, at: Date.now() });
   store(HISTORY_KEY, items.slice(0, 30));
@@ -506,23 +701,33 @@ function renderHistory() {
   for (const h of items) {
     const btn = el("button", { type: "button", onclick: () => restore(h) },
       el("span", { textContent: h.req.text }),
-      el("span", { className: "h-out", textContent: h.req.mode === "enhance" ? `Prompt: ${h.out}` : `→ ${h.req.target_lang}: ${h.out}` }));
+      el("span", { className: "h-out", textContent: h.req.mode === "enhance" ? `Enhance · ${scenarioLabel(h.req.scenario || "prompt")}: ${h.out}`
+        : h.req.mode === "relatives" ? `Relatives: ${h.out}` : `→ ${h.req.target_lang}: ${h.out}` }));
     ul.append(el("li", {}, btn));
   }
 }
 
 function restore(h) {
+  if (state.busy) return;
   $("input").value = h.req.text;
-  $("source").value = h.req.source_lang;
-  $("target").value = h.req.target_lang;
+  if (["translate", "dictionary"].includes(h.req.mode)) {
+    $("source").value = h.req.source_lang;
+    $("target").value = h.req.target_lang;
+  }
   setMode(h.req.mode);
+  $("scenario").value = h.req.scenario || (h.req.mode === "enhance" ? "prompt" : "general");
+  if (!$("scenario").value) $("scenario").value = "general";
   const key = h.req.model && `${h.req.provider || "ollama"}::${h.req.model}`;
   if (key && [...$("model").options].some((o) => o.value === key && !o.disabled)) $("model").value = key;
   state.last = h.data;
-  state.lastRequest = h.req;
+  state.lastRequest = { ...h.req, scenario: $("scenario").value };
   render(h.data);
   updateControls();
   window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function scenarioLabel(id) {
+  return state.info?.enhancement_scenarios.find((s) => s.id === id)?.label || id;
 }
 
 for (const b of document.querySelectorAll(".seg button")) b.addEventListener("click", () => { setMode(b.dataset.mode); savePrefs(); });
@@ -531,6 +736,13 @@ for (const id of ["source", "target", "tone", "model"]) $(id).addEventListener("
   savePrefs();
   updateControls();
 });
+$("scenario").addEventListener("change", () => {
+  state.last = null;
+  state.lastRequest = null;
+  $("meta").textContent = "";
+  setMode(state.mode);
+  savePrefs();
+});
 $("input").addEventListener("input", updateControls);
 $("furigana").addEventListener("change", () => { savePrefs(); if (state.last) render(state.last); });
 document.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run(); } });
@@ -538,13 +750,16 @@ $("go").addEventListener("click", () => run());
 $("retry").addEventListener("click", () => run("retry"));
 $("literal").addEventListener("click", () => run("more_literal"));
 $("natural").addEventListener("click", () => run("more_natural"));
+$("play").addEventListener("click", playTranslation);
+if (speechAvailable()) window.speechSynthesis.addEventListener("voiceschanged", updateAudioControls);
+window.addEventListener?.("pagehide", stopAudio);
 $("copy").addEventListener("click", () => {
   const d = state.last;
   if (!d) return;
   const shown = $("furigana").checked && d.furigana ? d.furigana.result : d;
-  copyText(d.mode === "enhance" ? d.enhanced_prompt : d.mode === "dictionary" ? $("output").innerText : shown.translation);
+  copyText(d.mode === "enhance" ? d.enhanced_prompt : ["dictionary", "relatives"].includes(d.mode) ? $("output").innerText : shown.translation);
 });
-$("clear").addEventListener("click", () => { $("input").value = ""; $("input").focus(); updateControls(); });
+$("clear").addEventListener("click", () => { stopAudio(); $("input").value = ""; $("input").focus(); updateControls(); });
 $("swap").addEventListener("click", () => {
   const src = $("source"), tgt = $("target");
   const from = src.value === "auto" ? (state.last?.detected_source_lang || "").toUpperCase() : src.value;

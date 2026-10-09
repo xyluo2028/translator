@@ -1,5 +1,5 @@
 [provider]
-# Default backend: "ollama" or "transformers" (local Hugging Face models). The web UI can pick either per request.
+# Default backend: "ollama", "transformers", "gemini", or "openai". The web UI can pick per request.
 name = "transformers"
 
 [ollama]
@@ -38,3 +38,21 @@ target_lang = "ZH"
 tone = "neutral"
 explain_lang = "EN"
 temperature = 0.2
+
+# Optional cloud backends. Keys are read from the server/CLI environment, never this file.
+# Select in the web UI or pass --provider gemini / --provider openai to translate.py.
+[openai]
+model = "gpt-6-luna"
+api_key_env = "OPENAI_API_KEY"
+models = []
+reasoning_effort = "none"
+max_output_tokens = 4096
+timeout_s = 120
+
+[gemini]
+model = "gemini-3.1-flash-lite"
+api_key_env = "GEMINI_API_KEY"
+models = []
+reasoning_effort = "minimal"
+max_output_tokens = 4096
+timeout_s = 120
