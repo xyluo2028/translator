@@ -5,3 +5,7 @@ __pycache__/
 .local/
 .env
 .env.*
+# Machine-specific runtime settings stay local. Commit only the portable template.
+/config.toml
+/config.*.toml
+!/config.example.toml

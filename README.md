@@ -131,6 +131,7 @@ Run every command from the repository folder: the scripts read `config.toml` fro
 git clone https://github.com/xyluo2028/translator.git
 cd translator
 python3 --version   # must be 3.13 or newer
+cp config.example.toml config.toml   # local settings, ignored by Git
 ```
 
 ### 2. Ollama backend
@@ -169,9 +170,11 @@ python3 --version   # must be 3.13 or newer
    `torchvision`), then run the `pip install -e` line above. On Apple Silicon the default install already uses
    the GPU (MPS).
 
-   The checked-in `config.toml` targets a 16 GB NVIDIA GPU with 4-bit quantization. Install its additional
-   dependency with `.venv/bin/pip install -e '.[transformers,cuda]'`. On Apple Silicon or CPU, set
-   `device_map = "auto"`, `dtype = "auto"`, `quantization = "none"`, and `attn_implementation = "auto"`.
+   To make this backend the default, set `[provider].name = "transformers"` in your local `config.toml`.
+   The example uses `device_map = "auto"`, `dtype = "auto"`, `quantization = "none"`, and
+   `attn_implementation = "auto"` for portable inference, including Apple Silicon (MPS).
+   NVIDIA-only 4-bit loading is opt-in: install `.venv/bin/pip install -e '.[transformers,cuda]'`
+   and configure your local file as described under [RTX 4080 / 16 GB GPU](#rtx-4080--16-gb-gpu).
 2. Download model weights (stored in `~/.cache/huggingface`; set `HF_HOME` to move it):
 
    ```bash
@@ -276,7 +279,7 @@ python3 translate.py "Hello" --from EN --to KO --json --pretty         # structu
 echo "Bonjour tout le monde" | python3 translate.py --to EN             # read from stdin
 .venv/bin/python translate.py "Where is teh station?" --to JA --furigana # auto-detection, spelling fix + readings
 .venv/bin/python translate.py "hello" --to JA --provider transformers --model tencent/HY-MT1.5-1.8B
-.venv/bin/python translate.py "fix teh parser, keep the API unchanged and add tests" --mode enhance --scenario prompt --config config.gpu.system.toml
+.venv/bin/python translate.py "fix teh parser, keep the API unchanged and add tests" --mode enhance --scenario prompt
 .venv/bin/python translate.py "hi, can you send me the notes when you get a chance" --mode enhance --scenario email --provider gemini
 .venv/bin/python translate.py "create" --mode relatives --provider gemini
 ```
@@ -335,7 +338,11 @@ How the app treats them:
 
 ## Configuration
 
-Everything lives in [`config.toml`](config.toml); use `--config path.toml` to load a different file.
+Copy [`config.example.toml`](config.example.toml) to `config.toml` and customize it for your machine.
+`config.toml` and `config.*.toml` (including GPU profiles) are ignored by Git; only the portable example
+is versioned. Existing local profiles can still be selected with `--config path.toml`.
+If `config.toml` is absent, the app uses its built-in defaults: Ollama and automatic Transformers
+device selection without quantization. Restart the web server after changing configuration.
 
 ```toml
 [provider]
@@ -379,79 +386,20 @@ for compatibility; this field contains the rewritten text for every scenario.
 
 ### RTX 4080 / 16 GB GPU
 
-For the GPU-focused Gemma runtime, use [`config.gpu.toml`](config.gpu.toml). This runs Google's official
-E4B QAT Q4_0 GGUF through a project-local Ollama server on port 11435. It keeps the same web UI and downloads
-the model from Hugging Face. The profile requests all model layers on GPU, a 2048-token context, one resident
-model, Flash Attention, and disabled thinking.
-
-The profile uses Ollama's generate endpoint with compact JSON. With this QAT GGUF, chat requests reached
-the 512-token limit before completing their JSON and triggered an extra repair request. The generate path
-completed the tested dictionary responses in one request. `ollama.api`, `structured_output`,
-`enable_thinking`, and `[ollama.options]` control these settings; other configurations keep the chat/schema defaults.
-
-The portable Ollama binary and model cache live under `.local/` (ignored by Git). With the runtime installed:
+NVIDIA settings belong in your local `config.toml` or an ignored profile such as `config.gpu.toml`.
+They are optional and must not be used on Apple Silicon. To create a separate profile:
 
 ```bash
-# Terminal 1 (leave running):
-bash scripts/serve-gpu.sh
-
-# Terminal 2 (pull only once, then launch the UI):
-OLLAMA_HOST=127.0.0.1:11435 .local/ollama/bin/ollama pull hf.co/google/gemma-4-E4B-it-qat-q4_0-gguf:latest
-.venv/bin/python webui.py --config config.gpu.toml --open
+cp config.example.toml config.gpu.toml
+.venv/bin/pip install -e '.[transformers,cuda]'
 ```
 
-To install the portable runtime on a fresh Linux x86-64 checkout, download `ollama-linux-amd64.tar.zst` from
-[the official releases](https://github.com/ollama/ollama/releases) and extract its `bin/` and `lib/` directories
-into `.local/ollama/`. This workspace has Ollama v0.35.1 installed there. The system Ollama at port 11434
-uses its own model cache. The QAT download is about 6.2 GB including the multimodal projector.
-
-To use an updated system Ollama instead, [`config.gpu.system.toml`](config.gpu.system.toml) has the same
-model settings and connects to port 11434. Pull the QAT model into that service's cache unless it was
-already imported, then launch the UI with this profile:
-
-```bash
-OLLAMA_HOST=127.0.0.1:11434 ollama pull hf.co/google/gemma-4-E4B-it-qat-q4_0-gguf:latest
-.venv/bin/python webui.py --config config.gpu.system.toml --port 8767 --open
-```
-
-The current workspace runs the optimized UI on port 8766 as the temporary user service
-`translator-webui-gpu`, and the original profile on port 8765 as `translator-webui-default`.
-After changing Python code or configuration, reload them with:
-
-```bash
-systemctl --user restart translator-webui-gpu
-systemctl --user restart translator-webui-default
-```
-
-These user services keep running independently of the chat session and are not configured to start
-automatically after a reboot. Use the foreground commands above to launch the UI again, or stop either
-service with `systemctl --user stop <service-name>`.
-
-Check placement while the model is loaded:
-
-```bash
-OLLAMA_HOST=127.0.0.1:11435 .local/ollama/bin/ollama ps
-```
-
-The processor column should report `100% GPU`. CPU still handles tokenization, JSON parsing, and web requests.
-The first lookup loads weights; later lookups reuse the model until Ollama unloads it after inactivity.
-Long texts that exceed the 2048-token context require increasing `ollama.options.num_ctx` and more VRAM.
-
-For the direct Transformers backend, `config.toml` also supports GPU-only quantized loading:
-
-The measured E4B bitsandbytes path used 8.6 GiB and placed every parameter and buffer on CUDA, but generated
-about 14 tokens/second on this machine. The QAT runtime generated about 130 tokens/second. See
-[the RTX 4080 benchmark](benchmarks/rtx4080_gemma4.md) for request timings and limits.
-
-Gemma 4 E4B has about 8 billion total parameters including embeddings. Its name describes effective
-parameters, so the full 16-bit model needs more memory than an ordinary 4B model. Google's
-[memory estimates](https://ai.google.dev/gemma/docs/core) put E4B at about 17.9 GB in BF16, including overhead.
-With `device_map = "auto"`, Transformers can place layers on CPU when GPU memory runs out; this adds
-transfer overhead and makes repeated requests slow.
-
-The checked-in configuration uses the existing Hugging Face weights with bitsandbytes NF4 quantization:
+For direct Transformers inference, edit the profile's existing sections:
 
 ```toml
+[provider]
+name = "transformers"
+
 [transformers]
 device_map = "cuda"
 dtype = "bfloat16"
@@ -461,20 +409,46 @@ max_cached_models = 1
 enable_thinking = false
 ```
 
-`device_map = "cuda"` places the entire model on the GPU and reports an error if it cannot fit. CPU still
-handles tokenization and request processing. Quantization compresses linear-layer weights; embeddings
-remain in the configured floating-point dtype, so actual memory use differs from a fully quantized GGUF.
-Quantization can change output quality. These settings apply to both the translator and dictionary model.
+Keep the model settings from the example. `device_map = "cuda"` places the entire model on NVIDIA GPU
+and reports an error if it cannot fit. Quantization compresses linear-layer weights; embeddings remain
+in the configured floating-point dtype, so memory use differs from a fully quantized GGUF.
+Switching models reloads weights with `max_cached_models = 1`; use 2 only if both models fit in VRAM.
 
-Restart the web UI after changing configuration. Repeated requests for the same model reuse its weights;
-switching between the translator and dictionary model reloads weights with `max_cached_models = 1`.
-Use 2 only if both quantized models plus generation memory fit in your free VRAM. Each new CLI invocation
-loads weights again, so use the running web UI to measure response time after loading.
+For the optional Gemma 4 QAT runtime, use Ollama and edit the profile's existing Ollama section:
 
-Google also publishes an official
-[E4B QAT 4-bit GGUF](https://huggingface.co/google/gemma-4-E4B-it-qat-q4_0-gguf) for llama.cpp-compatible runtimes.
-GGUF weights require a different inference runtime; they cannot be substituted directly into this
-Transformers backend. The in-place bitsandbytes configuration avoids another model download.
+```toml
+[provider]
+name = "ollama"
+
+[ollama]
+host = "http://127.0.0.1:11434"
+model = "hf.co/google/gemma-4-E4B-it-qat-q4_0-gguf:latest"
+dictionary_model = "hf.co/google/gemma-4-E4B-it-qat-q4_0-gguf:latest"
+enable_thinking = false
+structured_output = false
+api = "generate"
+
+[ollama.options]
+num_ctx = 2048
+num_gpu = 999
+num_predict = 512
+```
+
+The generate endpoint with compact JSON completed the tested dictionary responses in one request.
+Longer drafts need a larger context. Pull the model into the chosen Ollama service, then launch the UI:
+
+```bash
+ollama pull hf.co/google/gemma-4-E4B-it-qat-q4_0-gguf:latest
+.venv/bin/python webui.py --config config.gpu.toml --open
+```
+
+For a separate Linux x86-64 Ollama runtime, extract the official release's `bin/` and `lib/` directories
+into `.local/ollama/`, then run `bash scripts/serve-gpu.sh`. Set the profile's host to
+`http://127.0.0.1:11435` and use `OLLAMA_HOST=127.0.0.1:11435 .local/ollama/bin/ollama pull <model>`
+to populate that service's separate model cache. `.local/` is ignored by Git.
+
+See [the RTX 4080 benchmark](benchmarks/rtx4080_gemma4.md) for historical measurements and limits.
+The benchmark's configuration filenames describe local profiles used for that experiment.
 
 ## Troubleshooting
 
@@ -488,7 +462,7 @@ Transformers backend. The in-place bitsandbytes configuration avoids another mod
 | `This model is gated: accept its license …` | Accept the license on the model's Hugging Face page, then `.venv/bin/hf auth login`. |
 | `requires the PIL library` or `No module named 'torchvision'` | Your venv predates these dependencies: `.venv/bin/pip install -e '.[transformers]'`. |
 | `Quantized Transformers loading requires bitsandbytes` | Install `.venv/bin/pip install -e '.[transformers,cuda]'`, then restart the web UI. |
-| `GPU-only inference requires CUDA` | Check `.venv/bin/python -c 'import torch; print(torch.cuda.is_available())'`; install a CUDA-enabled PyTorch build and check the NVIDIA driver. Use `device_map = "auto"` for other hardware. |
+| `GPU-only inference requires CUDA` | On Mac or CPU, set `device_map = "auto"`, `dtype = "auto"`, `quantization = "none"`, and `attn_implementation = "auto"` in your local config, then restart the web UI. On NVIDIA, check the driver and CUDA-enabled PyTorch build. |
 | `CUDA out of memory` | Use 4-bit quantization and `max_cached_models = 1`, close other processes holding GPU models, or choose a smaller model. |
 | `Some parameters are on the meta device because they were offloaded to the disk` | Not enough free memory for the Hugging Face model, so it runs very slowly. Close other models (e.g. a running web UI, Ollama models via `ollama stop <model>`) or use `tencent/HY-MT1.5-1.8B`. |
 | `--furigana needs the text extra` / 振り仮名 toggle greyed out / no "Did you mean" | Install or update [step 4](#4-spelling-correction-and-japanese-readings-optional-recommended) and run with `.venv/bin/python`. Ambiguous short text may need an explicit source language for spelling correction. Restart the server after upgrading. |
@@ -505,7 +479,8 @@ Transformers backend. The in-place bitsandbytes configuration avoids another mod
 translate.py              CLI entry point
 webui.py                  local web server (standard library only)
 benchmark.py              runs benchmarks/translation_cases.json through the CLI
-config.toml               backends, models, defaults
+config.example.toml       portable configuration template (versioned)
+config.toml               local backends, models, device settings (ignored by Git)
 translator_app/
   core.py                 routing: picks model + prompt style, parses results
   prompting.py            JSON-schema prompts, HY-MT / TranslateGemma templates, language detection
